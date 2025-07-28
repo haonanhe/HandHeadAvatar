@@ -1,0 +1,15 @@
+setup.py
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/binding.cpp
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/face_areas_normals.cu
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/face_areas_normals_cpu.cpp
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/intersect.cpp
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/intersect_gpu.cu
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/octree.cpp
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/point_mesh.cu
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/sample.cpp
+/home/haonan/Codes/IMavatar/code/fairnr/clib/src/sample_gpu.cu
+fairnr.egg-info/PKG-INFO
+fairnr.egg-info/SOURCES.txt
+fairnr.egg-info/dependency_links.txt
+fairnr.egg-info/entry_points.txt
+fairnr.egg-info/top_level.txt

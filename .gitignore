@@ -1,0 +1,8 @@
+data/
+preprocess/DECA/
+preprocess/face-parsing.PyTorch/
+preprocess/submodules/
+code/mano_model/data/
+code/flame/FLAME2020/
+code/mano_model/
+

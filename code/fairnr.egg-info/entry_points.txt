@@ -1,0 +1,3 @@
+[console_scripts]
+fairnr-render = fairnr_cli.render:cli_main
+fairnr-train = fairseq_cli.train:cli_main
