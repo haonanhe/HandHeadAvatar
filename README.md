@@ -1,3 +1,6 @@
+# HandHeadAvatar
+The code is under testing...
+
 # Capturing Head Avatar with Hand Contacts from a Monocular Video
 ## [Paper](https://arxiv.org/abs/2510.17181) | [Video Youtube](https://www.youtube.com/watch?v=PgP1svuc4rI) | [Project Page](https://haonanhe.github.io/hand_head_avatar/)
 
@@ -33,3 +36,4 @@ If you find our code or paper useful, please cite as:
       url={https://arxiv.org/abs/2510.17181}, 
 }
 ```
+
