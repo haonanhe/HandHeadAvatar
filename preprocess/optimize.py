@@ -26,10 +26,7 @@ from pyhocon import ConfigFactory
 import gc
 
 from tqdm import tqdm
-# GLOBAL_POSE: if true, optimize global rotation, otherwise, only optimize head rotation (shoulder stays un-rotated)
-# if GLOBAL_POSE is set to false, global translation is used.
 GLOBAL_POSE = True
-# GLOBAL_POSE = False
 
 import cv2
 import argparse
@@ -43,8 +40,6 @@ sys.path.append('./submodules/DECA')
 from decalib.deca import DECA
 from decalib.utils import util
 from decalib.utils.config import cfg as deca_cfg
-
-import wandb
 
 np.random.seed(0)
 
@@ -223,35 +218,11 @@ def save_point_cloud_to_ply(points, colors=None, filename="point_cloud.ply"):
 
 
 def l2_distance(verts1, verts2, weight=None):
-    # if verts1.shape[1] == 21:
-    #     # finger_tips = [4,8,12,16,20]
-    #     # index_finger = [5,6,7,8]
-    #     index_finger = [8] # index finger tip
-    #     weight = torch.ones_like(verts1[...,:1]).to(verts1.device)
-    #     # weight[:,8:9,:] *= 10 # index finger tip
-    #     # weight[:,finger_tips,:] *= 10
-    #     weight[:,index_finger,:] *= 30
-    #     # weights[:,2:5,:] *= 0.00001 # thumb finger
     if weight is not None:
         return torch.sqrt((((verts1 - verts2)**2)*weight).sum(2)).mean(1).mean()
     else:
         return torch.sqrt(((verts1 - verts2)**2).sum(2)).mean(1).mean()
     
-# def l2_distance_hand(verts1, verts2, weight=None):
-#     if verts1.shape[1] == 21:
-#         finger_tips = [4,8,12,16,20]
-#         # index_finger = [5,6,7,8]
-#         # index_finger = [8] # index finger tip
-#         weight = torch.ones_like(verts1[...,:1]).to(verts1.device)
-#         # weight[:,8:9,:] *= 10 # index finger tip
-#         # weight[:,finger_tips,:] *= 10
-#         weight[:,finger_tips,:] *= 2
-#         # weights[:,2:5,:] *= 0.00001 # thumb finger
-#     if weight is not None:
-#         return torch.sqrt((((verts1 - verts2)**2)*weight).sum(2)).mean(1).mean() / verts1.shape[1]
-#     else:
-#         return torch.sqrt(((verts1 - verts2)**2).sum(2)).mean(1).mean() / verts1.shape[1]
-
 def projection(points, K, w2c, no_intrinsics=False):
     rot = w2c[:, np.newaxis, :3, :3]
     points_cam = torch.sum(points[..., np.newaxis, :] * rot, -1) + w2c[:, np.newaxis, :3, 3]
@@ -388,7 +359,7 @@ def modify_batched_masks(A):
     return B
                              
 class SmallDataset(Dataset):
-    def __init__(self, depth_images_pths, shape, exp, face_landmarks, face_poses, betas, global_orient, hand_landmarks, hand_poses, translation_v, hand_mask_pths, mano_scale, head_mask_pths, translation_f, betas_ori, hand_poses_ori, global_orient_ori, weight_hand_lmks, scales_all, flame_scale, translation_p):
+    def __init__(self, depth_images_pths, shape, exp, face_landmarks, face_poses, betas, global_orient, hand_landmarks, hand_poses, mano_transl, hand_mask_pths, mano_scale, head_mask_pths, flame_transl, betas_ori, hand_poses_ori, global_orient_ori, weight_hand_lmks, scales_all, flame_scale, translation_p):
         """
         Args:
             image_paths (list): List of paths to the depth images.
@@ -408,9 +379,9 @@ class SmallDataset(Dataset):
         self.hand_landmarks = hand_landmarks
         self.hand_poses = hand_poses
         self.translation_p = translation_p 
-        self.translation_v = translation_v
+        self.mano_transl = mano_transl
         self.mano_scale = mano_scale
-        self.translation_f = translation_f
+        self.flame_transl = flame_transl
 
         self.hand_mask_pths = hand_mask_pths
         self.head_mask_pths = head_mask_pths
@@ -471,8 +442,8 @@ class SmallDataset(Dataset):
         hand_poses = self.hand_poses[idx]
 
         translation_p = self.translation_p[idx]
-        translation_v = self.translation_v[idx]
-        translation_f = self.translation_f[idx]
+        mano_transl = self.mano_transl[idx]
+        flame_transl = self.flame_transl[idx]
 
         mano_scale = self.mano_scale[idx]
         
@@ -493,11 +464,11 @@ class SmallDataset(Dataset):
             'hand_landmarks': hand_landmarks,
             'hand_poses': hand_poses,
             'translation_p': translation_p,
-            'translation_v': translation_v,
+            'mano_transl': mano_transl,
             'hand_mask': hand_mask,
             'mano_scale': mano_scale,
             'head_mask': head_mask,
-            'translation_f': translation_f,
+            'flame_transl': flame_transl,
             'betas_ori': betas_ori,
             'hand_poses_ori': hand_poses_ori,
             'global_orient_ori': global_orient_ori,
@@ -509,31 +480,6 @@ class SmallDataset(Dataset):
 
         return out_dict
 
-class SlidingWindowDataset(Dataset):
-    def __init__(self, original_dataset, window_size, stride):
-        self.original_dataset = original_dataset  # 原始数据集
-        self.window_size = window_size            # 窗口大小（batch size）
-        self.stride = stride                      # 滑动步长
-
-    def __len__(self):
-        return (len(self.original_dataset) - self.window_size) // self.stride + 1
-    
-    def __getitem__(self, idx):
-        start = idx * self.stride
-        end = start + self.window_size
-        # 这里会多次调用 original_dataset.__getitem__(i)
-        # return [self.original_dataset[i] for i in range(start, end)]
-        
-        # Get all samples in the sliding window
-        samples = [self.original_dataset[i] for i in range(start, end)]
-        
-        # Stack each field in the dict
-        stacked_dict = {
-            key: torch.stack([sample[key] for sample in samples])
-            for key in samples[0].keys()  # Assumes all samples have the same keys
-        }
-        
-        return stacked_dict
     
 class DepthRankingLoss(nn.Module):
     def __init__(self, margin=1e-6):
@@ -619,107 +565,6 @@ def depth2disparity(depth, return_mask=False):
     else:
         return disparity
     
-def depth_evaluation(predicted_depth_original, ground_truth_depth_original, mask=None, max_depth=80, custom_mask=None, post_clip_min=None, post_clip_max=None, pre_clip_min=None, pre_clip_max=None,
-                     align_with_lstsq=False, align_with_lad=False, align_with_lad2=False, lr=1e-4, max_iters=1000, use_gpu=False, align_with_scale=False,
-                     disp_input=True):
-    """
-    Evaluate the depth map using various metrics and return a depth error parity map, with an option for least squares alignment.
-    
-    Args:
-        predicted_depth (numpy.ndarray or torch.Tensor): The predicted depth map.
-        ground_truth_depth (numpy.ndarray or torch.Tensor): The ground truth depth map.
-        max_depth (float): The maximum depth value to consider. Default is 80 meters.
-        align_with_lstsq (bool): If True, perform least squares alignment of the predicted depth with ground truth.
-    
-    Returns:
-        dict: A dictionary containing the evaluation metrics.
-        torch.Tensor: The depth error parity map.
-    """
-    ground_truth_depth_original = torch.clamp(ground_truth_depth_original, 0.1, 1)
-    
-    if mask is not None:
-        predicted_depth = predicted_depth_original[mask]
-        ground_truth_depth = ground_truth_depth_original[mask]
-    else:
-        predicted_depth = predicted_depth_original.clone()
-        ground_truth_depth = ground_truth_depth_original.clone()
-    
-    # Clip the depth values
-    if pre_clip_min is not None:
-        predicted_depth = torch.clamp(predicted_depth, min=pre_clip_min)
-    if pre_clip_max is not None:
-        predicted_depth = torch.clamp(predicted_depth, max=pre_clip_max)
-
-    if disp_input: # align the pred to gt in the disparity space
-        real_gt = ground_truth_depth.clone()
-        ground_truth_depth = 1 / (ground_truth_depth + 1e-8)
-        
-    # Convert to numpy for lstsq
-    predicted_depth_np = predicted_depth.detach().cpu().numpy().reshape(-1, 1)
-    ground_truth_depth_np = ground_truth_depth.detach().cpu().numpy().reshape(-1, 1)
-    
-    # Add a column of ones for the shift term
-    A = np.hstack([predicted_depth_np, np.ones_like(predicted_depth_np)])
-    
-    # ()
-    
-    # Solve for scale (s) and shift (t) using least squares
-    result = np.linalg.lstsq(A, ground_truth_depth_np, rcond=None)
-    s, t = result[0][0], result[0][1]
-
-    # convert to torch tensor
-    s = torch.tensor(s, device=predicted_depth_original.device)
-    t = torch.tensor(t, device=predicted_depth_original.device)
-    
-    # Apply scale and shift
-    predicted_depth = s * predicted_depth + t
-
-    if disp_input:
-        # convert back to depth
-        ground_truth_depth = real_gt
-        predicted_depth = depth2disparity(predicted_depth)
-
-    # Clip the predicted depth values
-    if post_clip_min is not None:
-        predicted_depth = torch.clamp(predicted_depth, min=post_clip_min)
-    if post_clip_max is not None:
-        predicted_depth = torch.clamp(predicted_depth, max=post_clip_max)
-
-    # Calculate the metrics
-    abs_rel = torch.mean(torch.abs(predicted_depth - ground_truth_depth) / ground_truth_depth)#.item()
-    sq_rel = torch.mean(((predicted_depth - ground_truth_depth) ** 2) / ground_truth_depth)#.item()
-    
-    # Correct RMSE calculation
-    rmse = torch.sqrt(torch.mean((predicted_depth - ground_truth_depth) ** 2))#.item()
-    
-    # Clip the depth values to avoid log(0)
-    predicted_depth = torch.clamp(predicted_depth, min=1e-5)
-    log_rmse = torch.sqrt(torch.mean((torch.log(predicted_depth) - torch.log(ground_truth_depth)) ** 2))#.item()
-    
-    predicted_depth_original = predicted_depth_original * s + t
-    if disp_input: predicted_depth_original = depth2disparity(predicted_depth_original)
-
-    results = {
-        'Abs Rel': abs_rel,
-        'Sq Rel': sq_rel,
-        'RMSE': rmse,
-        'Log RMSE': log_rmse,
-    }
-
-    return results, predicted_depth_original
-
-def bidirectional_contact_loss(verts_p_hand, verts_p_face):
-    # 手部到面部的最近距离
-    dist_hand_to_face = torch.cdist(verts_p_hand, verts_p_face).min(dim=1)[0]
-    
-    # 面部到手部的最近距离
-    dist_face_to_hand = torch.cdist(verts_p_face, verts_p_hand).min(dim=1)[0]
-    
-    # 组合两个方向的损失
-    loss = (dist_hand_to_face.mean() + dist_face_to_hand.mean()) / 2
-    
-    return loss
-
 class Optimizer(object):
     def __init__(self, device='cuda:0', save_folder=None, conf=None):
         deca_cfg.model.use_tex = False
@@ -742,11 +587,7 @@ class Optimizer(object):
         self.depth_ranking_loss = DepthRankingLoss()
 
         self.cross_entropy_loss = nn.CrossEntropyLoss()
-        
-        os.environ['WANDB_DIR'] = os.path.join(save_folder)
-        name = save_folder.split('/')[-2]
-        wandb.init(project='HHMavatar_preprocess', name=name + '_preprocess')
-        
+
         self.conf = conf
         self.conf_loss = self.conf.get_config('loss')
         self.optimize_depth_rank = self.conf_loss['optimize_depth_rank']
@@ -769,43 +610,43 @@ class Optimizer(object):
         K[0,2] = save_intrinsics[2] * 512
         K[1,2] = save_intrinsics[3] * 512
 
-        with open("../code/mano_model/data/contact_zones.pkl", "rb") as f:
+        with open("../code/mano_model/data/mano_contact_vertices.pkl", "rb") as f:
             contact_zones = pickle.load(f)
-        contact_zones = contact_zones["contact_zones"]
-        contact_idx = np.array([item for sublist in contact_zones.values() for item in sublist])
-        # contact_idx = contact_idx[19:47] #index finger
-        # contact_idx = contact_idx[-17:-1] # thumb
-        # contact_idx = np.concatenate([contact_idx[19:47], contact_idx[-17:-1]], axis=0)
-        # contact_idx =contact_idx[19:] #all fingers
-        
-        index_contact_idx = contact_idx[19:47] #index finger
-        thumb_contact_idx = contact_idx[-17:-1]
-        all_contact_idx = contact_idx[19:]
 
+        video_name = savefolder.split('/')[-1]
+        if "finger" in video_name:
+            contact_idx = np.array(contact_zones['index'])
+        elif "fist" in video_name:
+            contact_idx = np.array(contact_zones['fist'])
+        elif "palm" in video_name:
+            contact_idx = np.concatenate((np.array(contact_zones['index']), np.array(contact_zones['middle'])), axis=0)
+            # contact_idx = np.array(contact_zones['middle'])
+        elif "pinch" in video_name:
+            # contact_idx = np.concatenate((np.array(contact_zones['index']), np.array(contact_zones['middle']), np.array(contact_zones['ring']), np.array(contact_zones['thumb'])), axis=0)
+            contact_idx_1 = np.concatenate((np.array(contact_zones['index']), np.array(contact_zones['middle'])), axis=0)
+            contact_idx_2 = np.array(contact_zones['thumb'])
+        
         with open("../preprocess/submodules/DECA/data/FLAME_masks.pkl", "rb") as f:
             flame_masks = pickle.load(f, encoding='latin1')
         flame_face_masks_full = flame_masks["face"]
-        
+
         with open("../preprocess/submodules/DECA/data/face_idx.pkl", "rb") as f:
             flame_face_masks = pickle.load(f)
         flame_face_masks = np.array(flame_face_masks)
-        # flame_face_masks = torch.from_numpy(flame_face_masks).cuda()
-        # # flame_face_masks = flame_face_masks[:24]
-        # # flame_face_masks = flame_face_masks[::2]
-        
+
         with open("../preprocess/submodules/DECA/data/right_face_touch_region.pkl", "rb") as f:
-            flame_face_masks_right_cheeck = pickle.load(f)
-        flame_face_masks_right_cheeck = np.array(flame_face_masks_right_cheeck)
+            flame_face_masks_right_cheek = pickle.load(f)
+        flame_face_masks_right_cheek = np.array(flame_face_masks_right_cheek)
         
-        flame_face_masks_left_cheeck = result = np.setdiff1d(flame_face_masks, flame_face_masks_right_cheeck)
+        flame_face_masks_left_cheek = result = np.setdiff1d(flame_face_masks, flame_face_masks_right_cheek)
 
         if GLOBAL_POSE:
             translation_p = torch.tensor([0, 0, -4]).float().cuda()
         else:
             translation_p = torch.tensor([0, 0, -4]).unsqueeze(0).expand(num_img, -1).float().cuda()
         
-        translation_v = torch.tensor([0, 0, 0]).unsqueeze(0).expand(num_img, -1).float().cuda()
-        translation_f = torch.tensor([0, 0, 0]).unsqueeze(0).expand(num_img, -1).float().cuda()
+        mano_transl = torch.tensor([0, 0, 0]).unsqueeze(0).expand(num_img, -1).float().cuda()
+        flame_transl = torch.tensor([0, 0, 0]).unsqueeze(0).expand(num_img, -1).float().cuda()
         mano_scale = torch.tensor([4]).unsqueeze(0).expand(num_img, -1).float().cuda()
         flame_scale = torch.tensor([4]).unsqueeze(0).expand(num_img, -1).float().cuda()
 
@@ -821,21 +662,17 @@ class Optimizer(object):
         face_poses = nn.Parameter(face_poses)
         exp = nn.Parameter(exp)
         shape = nn.Parameter(shape)
-        # flame_scale = nn.Parameter(flame_scale)
-        # translation_f = nn.Parameter(translation_f)
-        
+
         hand_poses = nn.Parameter(hand_poses)
         betas = nn.Parameter(betas)
         mano_scale = nn.Parameter(mano_scale)
-        translation_v = nn.Parameter(translation_v)
-        
+        mano_transl = nn.Parameter(mano_transl)
         translation_p = nn.Parameter(translation_p)
         
         # Load all depth images and masks upfront
         depth_images = []
         hand_masks = []
         head_masks = []
-        # transform = transforms.Compose([transforms.Resize((512, 512))])
         transform = transforms.Compose([transforms.Resize((128, 128))])
         
         for i in range(num_img):
@@ -861,27 +698,20 @@ class Optimizer(object):
         hand_masks = torch.stack(hand_masks)
         head_masks = torch.stack(head_masks)
         
-       ################## Stage I ##################
-
-        # opt_t = torch.optim.Adam(
-        #     [translation_v, face_poses, mano_scale, translation_p, flame_scale, translation_f], 
-        #     lr=1e-2)
-        opt_t = torch.optim.Adam(
-            [translation_v, face_poses, mano_scale, translation_p], 
-            lr=1e-2)
-        opt_p = torch.optim.Adam(
-            [exp, shape, betas, hand_poses, global_orient],
-            lr=1e-4)
-
-        # optimization steps
         len_landmark_face = face_landmarks.shape[1]
         len_landmark_hand = hand_landmarks.shape[1]
+        
         hand_landmarks = (hand_landmarks[..., :2] - (size/2)) / (size/2)
         
+       ################## Stage I ##################
+        opt_t = torch.optim.Adam(
+            [face_poses, translation_p], 
+            lr=1e-2)
+        opt_p = torch.optim.Adam(
+            [exp, shape],
+            lr=1e-4)
+
         for k in tqdm(range(1501)):
-        # for k in tqdm(range(1801)):
-        # for k in range(2001):
-        # for k in range(101):
             face_full_pose = face_poses
             if not use_iris:
                 face_full_pose = torch.cat([face_full_pose, torch.zeros_like(face_full_pose[..., :6])], dim=1)
@@ -895,16 +725,15 @@ class Optimizer(object):
             verts_p_face *= flame_scale.unsqueeze(1)
             landmarks3d_p_face *= flame_scale.unsqueeze(1)
             landmarks2d_p_face *= flame_scale.unsqueeze(1)
-            verts_p_face += translation_f.unsqueeze(1)
-            landmarks3d_p_face += translation_f.unsqueeze(1)
-            landmarks2d_p_face += translation_f.unsqueeze(1)
+            verts_p_face += flame_transl.unsqueeze(1)
+            landmarks3d_p_face += flame_transl.unsqueeze(1)
+            landmarks2d_p_face += flame_transl.unsqueeze(1)
 
             pred_mano_params = {
                 'global_orient': global_orient,
                 'hand_pose': hand_poses,
-                # 'betas': betas.expand(num_img, -1),
                 'betas': betas,
-                'transl': translation_v,
+                'transl': mano_transl,
                 'scale': mano_scale
             }
             mano_output = self.MANOServer(**{k: v.float() for k,v in pred_mano_params.items()}, pose2rot=False)
@@ -921,142 +750,25 @@ class Optimizer(object):
             else:
                 w2c_p = torch.cat([ident, translation_p.unsqueeze(2)], dim=2)
 
-            trans_landmarks2d_face = projection(landmarks3d_p_face, cam_intrinsics, w2c_p)
-            trans_landmarks2d_hand = projection(landmarks3d_p_hand, cam_intrinsics, w2c_p)
-            landmark = torch.cat([face_landmarks, hand_landmarks], dim=1)
-            
             ## landmark loss
             trans_landmarks2d_face = projection(landmarks3d_p_face, cam_intrinsics, w2c_p)
-            trans_landmarks2d_hand = projection(landmarks3d_p_hand, cam_intrinsics, w2c_p)
             trans_landmarks3d_face = projection(landmarks3d_p_face, cam_intrinsics, w2c_p, no_intrinsics=True)
-            trans_landmarks3d_hand = projection(landmarks3d_p_hand, cam_intrinsics, w2c_p, no_intrinsics=True)
-            landmark = torch.cat([hand_landmarks, face_landmarks], dim=1)
-            
+
             ## landmark loss
             landmark_loss2 = l2_distance(trans_landmarks2d_face[:, :len_landmark_face, :2], face_landmarks[:, :len_landmark_face]) 
-            landmark_loss2 += l2_distance(trans_landmarks2d_hand[:, :len_landmark_hand, :2], hand_landmarks[:, :len_landmark_hand])
             landmark_loss2 = landmark_loss2 * 2
             total_loss = landmark_loss2
 
             smooth_loss = 0
             smooth_loss += torch.mean(torch.square(exp[1:] - exp[:-1])) * 1e-1
             smooth_loss += torch.mean(torch.square(face_poses[1:] - face_poses[:-1]))
-            smooth_loss += torch.mean(torch.square(global_orient[1:] - global_orient[:-1])) #* 1e-1
-            smooth_loss += torch.mean(torch.square(hand_poses[1:] - hand_poses[:-1])) * 10
-            smooth_loss += torch.mean(torch.square(translation_f[1:] - translation_f[:-1])) #* 10
-            smooth_loss += torch.mean(torch.square(translation_v[1:] - translation_v[:-1])) * 10
+            smooth_loss += torch.mean(torch.square(flame_transl[1:] - flame_transl[:-1]))
             smooth_loss += torch.mean(torch.square(trans_landmarks3d_face[1:] - trans_landmarks3d_face[:-1])) * 100
-            smooth_loss += torch.mean(torch.square(trans_landmarks3d_hand[1:] - trans_landmarks3d_hand[:-1])) * 100
-            smooth_loss += torch.mean(torch.square(mano_scale[1:] - mano_scale[:-1]))  * 10
             smooth_loss += torch.mean(torch.square(flame_scale[1:] - flame_scale[:-1]))
-            smooth_loss += torch.mean(torch.square(verts_p_face[1:] - verts_p_face[:-1])) #* 10
-            smooth_loss += torch.mean(torch.square(verts_p_hand[1:] - verts_p_hand[:-1]))
-            
-            # smooth_loss += torch.mean(torch.square(mano_scale[2:] - 2 * mano_scale[1:-1] + mano_scale[:-2]))* 10
-            # smooth_loss += torch.mean(torch.square(hand_poses[2:] - 2 * hand_poses[1:-1] + hand_poses[:-2]))* 10
-            # smooth_loss += torch.mean(torch.square(translation_v[2:] - 2 * translation_v[1:-1] + translation_v[:-2]))* 10
-            # smooth_loss += torch.mean(torch.square(verts_p_hand[2:] - 2 * verts_p_hand[1:-1] + verts_p_hand[:-2]))* 10
-            
+
             smooth_loss = smooth_loss
             total_loss += smooth_loss
             
-            # # contact_loss = 0
-            # # contact loss
-            # # mano_vertices_tips = verts_p_hand
-            # mano_vertices_tips = verts_p_hand[:,contact_idx,:]
-            # knn_v = verts_p_face.detach()[:,flame_face_masks,:].clone()
-            # contact_loss = ((knn_points(mano_vertices_tips, knn_v, K=6, return_nn=False)[0])**2).mean()
-            # contact_loss = contact_loss * self.conf_loss['contact_weight']
-            # total_loss += contact_loss 
-            
-            # mask_loss = 0
-            # depth_ranking_loss = 0
-            
-            # # if k % 50 == 0:
-            # # if k % 50 == 0 and k != 0 and k > 500:
-            # if k > 1400 and self.optimize_depth_rank:
-            #     trans_verts_hand = projection(verts_p_hand, cam_intrinsics, w2c_p)
-            #     trans_verts_hand_cam = projection(verts_p_hand, cam_intrinsics, w2c_p, no_intrinsics=True)
-            #     trans_verts_head = projection(verts_p_face, cam_intrinsics, w2c_p)
-            #     trans_verts_head_cam = projection(verts_p_face, cam_intrinsics, w2c_p, no_intrinsics=True)
-            #     trans_verts = projection(verts_p, cam_intrinsics, w2c_p)
-            #     trans_verts_cam = projection(verts_p, cam_intrinsics, w2c_p, no_intrinsics=True)
-                
-            #     pred_depth_images_hand_list, pred_mask_hand_list = [], []
-            #     pred_depth_images_head_list, pred_mask_head_list = [], []
-            #     pred_depth_images_list, pred_mask_list = [], []
-                
-            #     chunk_size = 1
-            #     for i in range(0, verts_p.shape[0], chunk_size):
-            #         pred_depth_images_hand, pred_mask_hand = self.deca_optim.render_hand.render_depth(trans_verts_hand[i:i+chunk_size], trans_verts_hand_cam[i:i+chunk_size], render_mano=True)
-            #         pred_depth_images_hand = pred_depth_images_hand.reshape(-1,128,128)
-            #         pred_mask_hand = pred_mask_hand.reshape(-1,128,128).bool()
-                    
-            #         pred_depth_images_head, pred_mask_head = self.deca_optim.render.render_depth(trans_verts_head[i:i+chunk_size], trans_verts_head_cam[i:i+chunk_size])
-            #         pred_depth_images_head = pred_depth_images_head.reshape(-1,128,128)
-            #         pred_mask_head = pred_mask_head.reshape(-1,128,128).bool()
-
-            #         # pred_depth_images, pred_mask = self.deca_optim.render_hand_head.render_depth(trans_verts[i:i+chunk_size], trans_verts_cam[i:i+chunk_size])
-            #         # pred_depth_images = pred_depth_images.reshape(-1,128,128)
-            #         # pred_mask = pred_mask.reshape(-1,128,128).bool()
-                    
-            #         pred_depth_images_hand_list.append(pred_depth_images_hand)
-            #         pred_mask_hand_list.append(pred_mask_hand)
-            #         pred_depth_images_head_list.append(pred_depth_images_head)
-            #         pred_mask_head_list.append(pred_mask_head)
-            #         # pred_depth_images_list.append(pred_depth_images)
-            #         # pred_mask_list.append(pred_mask)
-                
-            #     pred_depth_images_hand = torch.cat(pred_depth_images_hand_list, dim=0)
-            #     pred_mask_hand = torch.cat(pred_mask_hand_list, dim=0)
-            #     pred_depth_images_head = torch.cat(pred_depth_images_head_list, dim=0)
-            #     pred_mask_head = torch.cat(pred_mask_head_list, dim=0)
-            #     # pred_depth_images = torch.cat(pred_depth_images_list, dim=0)
-            #     # pred_mask = torch.cat(pred_mask_list, dim=0)
-                
-            #     b_hand_mask = hand_masks.clone().bool().cuda()
-            #     b_head_mask = head_masks.clone().bool().cuda()
-            #     b_depth_img = depth_images.clone().cuda()
-            
-            #     bz = b_depth_img.shape[0]
-            #     pred_mask_hand = pred_mask_hand.bool() #& b_hand_mask.bool() #& (~b_head_mask.bool())
-            #     overlap_mask_hand = pred_mask_hand.bool() & pred_mask_head.bool() #& b_hand_mask.bool() 
-            #     bbox_mask_head = modify_batched_masks(overlap_mask_hand.reshape(bz,128,128))
-            #     bbox_mask_head = bbox_mask_head & pred_mask_head.bool() & (~pred_mask_hand) & (~b_hand_mask.bool())
-
-            #     # # depth_ranking_loss = self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_head.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), (pred_mask_hand & b_hand_mask.bool()).reshape(bz,128,128), (pred_mask_head & b_head_mask.bool()).reshape(bz,128,128)) # whole hand and whole head
-            #     # # depth_ranking_loss = depth_ranking_loss + self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_head.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), overlap_mask_hand.reshape(bz,128,128), bbox_mask_head.reshape(bz,128,128)) # address the overlap area
-            #     # # depth_ranking_loss = depth_ranking_loss + self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_hand.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), (pred_mask_hand & b_hand_mask.bool()).reshape(bz,128,128), (pred_mask_hand & b_hand_mask.bool()).reshape(bz,128,128)) # to make sure the depth order inside the hand is correct (global orient)
-                
-            #     # depth_ranking_loss = self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_head.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), overlap_mask_hand.reshape(bz,128,128), bbox_mask_head.reshape(bz,128,128)) # address the overlap area
-            #     depth_ranking_loss = self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_head.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), overlap_mask_hand.reshape(bz,128,128), (pred_mask_head & b_head_mask.bool()).reshape(bz,128,128)) # address the overlap area
-                
-            #     # depth_ranking_loss = self.depth_ranking_loss(pred_depth_images.reshape(bz,128,128), pred_depth_images.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), (b_hand_mask.bool()).reshape(bz,128,128), (b_head_mask.bool()).reshape(bz,128,128)) # whole hand and whole head
-                
-            #     depth_ranking_loss = depth_ranking_loss * self.conf_loss['depth_rank_weight']
-            #     total_loss += depth_ranking_loss 
-                
-            #     # pred_mask_compose = torch.zeros_like(pred_mask_hand, dtype=torch.float, device=pred_mask_hand.device)
-            #     # pred_mask_hand = pred_mask_hand.bool()
-            #     # pred_mask_head = pred_mask_head.bool()
-            #     # overlap = pred_mask_hand & pred_mask_head
-            #     # hand_only = pred_mask_hand & ~overlap
-            #     # head_only = pred_mask_head & ~overlap
-            #     # pred_mask_compose[hand_only] = 1.
-            #     # pred_mask_compose[head_only] = 2.
-            #     # if overlap.any():
-            #     #     hand_depth_overlap = pred_depth_images_hand[overlap]
-            #     #     head_depth_overlap = pred_depth_images_head[overlap]
-            #     #     closer_hand = hand_depth_overlap < head_depth_overlap
-            #     #     pred_mask_compose[overlap] = torch.where(closer_hand, 1., 2.)
-                    
-            #     # gt_mask_compose = torch.zeros_like(b_hand_mask).float().to(b_hand_mask.device)
-            #     # gt_mask_compose[b_hand_mask==True] = 1.
-            #     # gt_mask_compose[b_head_mask==True] = 2.
-            #     # mask_loss = self.cross_entropy_loss(pred_mask_compose[overlap], gt_mask_compose[overlap]) / float(overlap.sum()) 
-            #     # mask_loss = mask_loss * self.conf_loss['mask_weight']
-            #     # total_loss += mask_loss 
-                
             opt_p.zero_grad()
             opt_t.zero_grad()
             total_loss.backward()
@@ -1065,77 +777,97 @@ class Optimizer(object):
 
             # visualize
             if k % 100 == 0:
-                # if k > 198:
-                #     del trans_verts_hand, trans_verts_hand_cam, trans_verts_head, trans_verts_head_cam, trans_verts, trans_verts_cam
-                #     del b_hand_mask, b_head_mask, b_depth_img, pred_depth_images_hand, pred_mask_hand, pred_depth_images_head, pred_mask_head, pred_depth_images, pred_mask, pred_mask_compose, gt_mask_compose, bbox_mask_head
-                #     torch.cuda.empty_cache()
-                # if k > 1400 and self.optimize_depth_rank:
-                #     del trans_verts_hand, trans_verts_hand_cam, trans_verts_head, trans_verts_head_cam, trans_verts, trans_verts_cam
-                #     del b_hand_mask, b_head_mask, b_depth_img
-                #     # del pred_depth_images, pred_mask
-                #     # del bbox_mask_head
-                #     del pred_depth_images_hand, pred_mask_hand, pred_depth_images_head, pred_mask_head
-                #     # del pred_mask_compose, gt_mask_compose, overlap, hand_only, head_only, hand_depth_overlap, head_depth_overlap, closer_hand
-                #     torch.cuda.empty_cache()  # Frees up unused memory on GPU
-                #     gc.collect()  # Forces garbage collection
                 with torch.no_grad():
-                    # loss_info = '----iter: {}, time: {}\n'.format(k,
-                    #                                               datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S'))
-                    # loss_info = loss_info + f'landmark_loss: {landmark_loss2}'
-                    
                     loss_info = '----iter: {}, time: {}\n'.format(k,
                                                                 datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S'))
                     
                     acc_loss = {}
                     acc_loss['landmark_loss'] = landmark_loss2
                     acc_loss['smooth_loss'] = smooth_loss
-                    # acc_loss['contact_loss'] = contact_loss
-                    # acc_loss['mask_loss'] = mask_loss
-                    # acc_loss['depth_ranking_loss'] = depth_ranking_loss
-                    wandb.log(acc_loss)
-                    
+  
                     loss_info = loss_info + f'landmark_loss: {landmark_loss2}' \
                                           + f', smooth_loss: {smooth_loss}'\
-                                        #   + f', contact_loss: {contact_loss}' \
-                                        #   + f', mask_loss: {mask_loss}' \
-                                        #   + f', depth_ranking_loss: {depth_ranking_loss}' \
                                        
                     print(loss_info)
                     
-                    # verts_p = torch.cat([verts_p_face, verts_p_hand], dim=1)
-                    # trans_verts = projection(verts_p[::50], cam_intrinsics, w2c_p[::50])
-                    # trans_verts_cam = projection(verts_p[::50], cam_intrinsics, w2c_p[::50], no_intrinsics=True)
-                    # shape_images = self.deca.render_hand_head.render_shape(verts_p[::50], trans_verts)
-                    # depth_images_vis, _ = self.deca.render_hand_head.render_depth(trans_verts, trans_verts_cam)
-                    # visdict = {
-                    #     # 'inputs': visualize_images,
-                    #     'gt_landmarks2d': util.tensor_vis_landmarks(visualize_images, landmark[::50], isScale=True),
-                    #     'landmarks2d': util.tensor_vis_landmarks(visualize_images, trans_landmarks2d.detach()[::50], isScale=True),
-                    #     'shape_images': shape_images,
-                    #     'depth_images': depth_images_vis
-                    # }
-                    # cv2.imwrite(os.path.join(savefolder, 'optimize_vis.jpg'), self.deca.visualize(visdict))
-        
         ################## Stage II ##################
         opt_t = torch.optim.Adam(
-            [translation_v, mano_scale],
+            [mano_transl, mano_scale], 
             lr=1e-2)
-        # opt_p = torch.optim.Adam(
-        #     [exp, shape, betas, hand_poses, global_orient],
-        #     lr=1e-4)
+        opt_p = torch.optim.Adam(
+            [betas, hand_poses, global_orient],
+            lr=1e-4)
+
+        for k in tqdm(range(1501)):
+            pred_mano_params = {
+                'global_orient': global_orient,
+                'hand_pose': hand_poses,
+                'betas': betas,
+                'transl': mano_transl,
+                'scale': mano_scale
+            }
+            mano_output = self.MANOServer(**{k: v.float() for k,v in pred_mano_params.items()}, pose2rot=False)
+            verts_p_hand = mano_output.vertices.clone()
+            landmarks3d_p_hand = mano_output.joints.clone()
+
+            # perspective projection
+            # Global rotation is handled in FLAME, set camera rotation matrix to identity
+            ident = torch.eye(3).float().cuda().unsqueeze(0).expand(num_img, -1, -1)
+            if GLOBAL_POSE:
+                w2c_p = torch.cat([ident, translation_p.unsqueeze(0).expand(num_img, -1).unsqueeze(2)], dim=2)
+            else:
+                w2c_p = torch.cat([ident, translation_p.unsqueeze(2)], dim=2)
+
+            ## landmark loss
+            trans_landmarks2d_hand = projection(landmarks3d_p_hand, cam_intrinsics, w2c_p)
+            trans_landmarks3d_hand = projection(landmarks3d_p_hand, cam_intrinsics, w2c_p, no_intrinsics=True)
+   
+            ## landmark loss
+            landmark_loss2 = l2_distance(trans_landmarks2d_hand[:, :len_landmark_hand, :2], hand_landmarks[:, :len_landmark_hand])
+            landmark_loss2 = landmark_loss2 * 2
+            total_loss = landmark_loss2
+
+            smooth_loss = 0
+            smooth_loss += torch.mean(torch.square(hand_poses[1:] - hand_poses[:-1])) * 10
+            smooth_loss += torch.mean(torch.square(mano_transl[1:] - mano_transl[:-1])) * 10
+            smooth_loss += torch.mean(torch.square(trans_landmarks3d_hand[1:] - trans_landmarks3d_hand[:-1])) * 100
+            smooth_loss += torch.mean(torch.square(mano_scale[1:] - mano_scale[:-1]))  * 10
+            smooth_loss += torch.mean(torch.square(verts_p_hand[1:] - verts_p_hand[:-1]))
+
+            smooth_loss = smooth_loss
+            total_loss += smooth_loss
+            
+            opt_p.zero_grad()
+            opt_t.zero_grad()
+            total_loss.backward()
+            opt_p.step()
+            opt_t.step()
+
+            # visualize
+            if k % 100 == 0:
+                with torch.no_grad():
+                    loss_info = '----iter: {}, time: {}\n'.format(k,
+                                                                datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S'))
+                    
+                    acc_loss = {}
+                    acc_loss['landmark_loss'] = landmark_loss2
+                    acc_loss['smooth_loss'] = smooth_loss
+   
+                    loss_info = loss_info + f'landmark_loss: {landmark_loss2}' \
+                                          + f', smooth_loss: {smooth_loss}'\
+                                       
+                    print(loss_info)
+                    
+        
+        ################## Stage III ##################
+        opt_t = torch.optim.Adam(
+            [mano_transl, mano_scale],
+            lr=1e-2)
         opt_p = torch.optim.Adam(
             [global_orient],
             lr=1e-4)
 
-        # # optimization steps
-        # len_landmark_face = face_landmarks.shape[1]
-        # len_landmark_hand = hand_landmarks.shape[1]
-        # hand_landmarks = (hand_landmarks[..., :2] - (size/2)) / (size/2)
-        
-        # for k in tqdm(range(0)):
         for k in tqdm(range(1501)):
-        # for k in range(2001):
-        # for k in range(101):
             face_full_pose = face_poses
             if not use_iris:
                 face_full_pose = torch.cat([face_full_pose, torch.zeros_like(face_full_pose[..., :6])], dim=1)
@@ -1149,16 +881,15 @@ class Optimizer(object):
             verts_p_face *= flame_scale.unsqueeze(1)
             landmarks3d_p_face *= flame_scale.unsqueeze(1)
             landmarks2d_p_face *= flame_scale.unsqueeze(1)
-            verts_p_face += translation_f.unsqueeze(1)
-            landmarks3d_p_face += translation_f.unsqueeze(1)
-            landmarks2d_p_face += translation_f.unsqueeze(1)
+            verts_p_face += flame_transl.unsqueeze(1)
+            landmarks3d_p_face += flame_transl.unsqueeze(1)
+            landmarks2d_p_face += flame_transl.unsqueeze(1)
 
             pred_mano_params = {
                 'global_orient': global_orient,
                 'hand_pose': hand_poses,
-                # 'betas': betas.expand(num_img, -1),
                 'betas': betas,
-                'transl': translation_v,
+                'transl': mano_transl,
                 'scale': mano_scale
             }
             mano_output = self.MANOServer(**{k: v.float() for k,v in pred_mano_params.items()}, pose2rot=False)
@@ -1183,92 +914,44 @@ class Optimizer(object):
             landmark = torch.cat([hand_landmarks, face_landmarks], dim=1)
             
             ## landmark loss
-            # landmark_loss2 = l2_distance(trans_landmarks2d_face[:, :len_landmark_face, :2], face_landmarks[:, :len_landmark_face]) 
             landmark_loss2 = l2_distance(trans_landmarks2d_hand[:, :len_landmark_hand, :2], hand_landmarks[:, :len_landmark_hand])
             landmark_loss2 = landmark_loss2 * self.conf_loss['landmark_weight']
             total_loss = landmark_loss2
 
             smooth_loss = 0
-            # smooth_loss += torch.mean(torch.square(exp[1:] - exp[:-1])) * 1e-1
-            # smooth_loss += torch.mean(torch.square(face_poses[1:] - face_poses[:-1]))
-            smooth_loss += torch.mean(torch.square(global_orient[1:] - global_orient[:-1])) #* 1e-1
-            smooth_loss += torch.mean(torch.square(hand_poses[1:] - hand_poses[:-1]))* 10
-            # smooth_loss += torch.mean(torch.square(translation_f[1:] - translation_f[:-1])) #* 10
-            smooth_loss += torch.mean(torch.square(translation_v[1:] - translation_v[:-1])) * 10
-            # smooth_loss += torch.mean(torch.square(trans_landmarks3d_face[1:] - trans_landmarks3d_face[:-1])) * 100
-            smooth_loss += torch.mean(torch.square(trans_landmarks3d_hand[1:] - trans_landmarks3d_hand[:-1])) * 100
-            smooth_loss += torch.mean(torch.square(mano_scale[1:] - mano_scale[:-1]))* 10
-            # smooth_loss += torch.mean(torch.square(flame_scale[1:] - flame_scale[:-1]))
-            # smooth_loss += torch.mean(torch.square(verts_p_face[1:] - verts_p_face[:-1]))
-            smooth_loss += torch.mean(torch.square(verts_p_hand[1:] - verts_p_hand[:-1]))* 10
+            smooth_loss += torch.mean(torch.square(global_orient[1:] - global_orient[:-1]))
+            smooth_loss += torch.mean(torch.square(hand_poses[1:] - hand_poses[:-1]))
+            smooth_loss += torch.mean(torch.square(mano_transl[1:] - mano_transl[:-1]))
+            smooth_loss += torch.mean(torch.square(trans_landmarks2d_hand[1:] - trans_landmarks2d_hand[:-1])) 
+            smooth_loss += torch.mean(torch.square(trans_landmarks3d_hand[1:] - trans_landmarks3d_hand[:-1]))
+            smooth_loss += torch.mean(torch.square(mano_scale[1:] - mano_scale[:-1]))
+            smooth_loss += torch.mean(torch.square(verts_p_hand[1:] - verts_p_hand[:-1]))
             smooth_loss = smooth_loss * self.conf_loss['smooth_weight']
             total_loss += smooth_loss
-            
-            # contact_loss = 0
-            # contact loss
-            # mano_vertices_tips = verts_p_hand
-            # mano_vertices_tips = verts_p_hand[:,contact_idx,:]
-            # knn_v = verts_p_face.detach()[:,flame_face_masks,:].clone()
-            # contact_loss = ((knn_points(mano_vertices_tips, knn_v, K=3, return_nn=False)[0])**2).mean()
-            # contact_loss = contact_loss * self.conf_loss['contact_weight']
-            # total_loss += contact_loss 
-            
-           
-            mano_vertices_tips = verts_p_hand[:self.contact_frame_idx,:,:][:,index_contact_idx,:] 
-            knn_v = verts_p_face.detach()[:self.contact_frame_idx,:,:][:,flame_face_masks_right_cheeck,:].clone()
-            contact_loss = ((knn_points(mano_vertices_tips, knn_v, K=3, return_nn=False)[0])**2).mean()
-            
-            mano_vertices_tips = verts_p_hand[self.contact_frame_idx:,:,:][:,thumb_contact_idx,:]
-            knn_v = verts_p_face.detach()[self.contact_frame_idx:,:,:][:,flame_face_masks_right_cheeck,:].clone()
-            contact_loss = contact_loss + ((knn_points(mano_vertices_tips, knn_v, K=3, return_nn=False)[0])**2).mean()
-            
-            mano_vertices_tips = verts_p_hand[self.contact_frame_idx:,:,:][:,index_contact_idx,:]
-            knn_v = verts_p_face.detach()[self.contact_frame_idx:,:,:][:,flame_face_masks_left_cheeck,:].clone()
-            contact_loss = contact_loss + 4*((knn_points(mano_vertices_tips, knn_v, K=3, return_nn=False)[0])**2).mean()
-            
+
+            if video_name == 'pinch':
+                mano_vertices_tips = verts_p_hand[:,contact_idx_1,:] 
+                knn_v = verts_p_face.detach()[:,flame_face_masks_left_cheek,:].clone()
+                contact_loss = ((knn_points(mano_vertices_tips, knn_v, K=3, return_nn=False)[0])**2).mean()/contact_idx_1.shape[0]
+        
+                mano_vertices_tips = verts_p_hand[:,contact_idx_2,:] 
+                knn_v = verts_p_face.detach()[:,flame_face_masks_right_cheek,:].clone()
+                contact_loss = contact_loss + ((knn_points(mano_vertices_tips, knn_v, K=3, return_nn=False)[0])**2).mean()/contact_idx_2.shape[0]
+            else:
+                mano_vertices_tips = verts_p_hand[:,contact_idx,:] 
+                knn_v = verts_p_face.detach()[:,flame_face_masks_right_cheek,:].clone()
+                contact_loss = ((knn_points(mano_vertices_tips, knn_v, K=3, return_nn=False)[0])**2).mean()/contact_idx.shape[0]
+                
             contact_loss = contact_loss * self.conf_loss['contact_weight']
+            
+            if 'palm' in video_name:
+                contact_loss = contact_loss * 4
+                
             total_loss += contact_loss 
             
-            # ############
-            # flame_face_masks_right_cheeks = torch.where(verts_p_face[0][flame_face_masks][:, 0] < 0)[0]
-            # flame_face_masks_right_cheeks = flame_face_masks[flame_face_masks_right_cheeks]
-            # with open('/home/haonan/data/HHAvatar/preprocess/submodules/DECA/data/right_face_touch_region.pkl', 'wb') as f:
-            #     pickle.dump(flame_face_masks_right_cheeks.cpu().numpy(), f)
-            
-            # colors = torch.tensor([
-            #     [0.5, 0.5, 0.5],  # Green
-            # ], dtype=torch.float32).repeat(verts_p_face[0].shape[0],1).float().cuda()
-            # red_color = torch.tensor([
-            #     [1, 0, 0],  # Red
-            # ], dtype=torch.float32).float().cuda()
-            # colors[flame_face_masks_right_cheeks] = red_color
-            # point_cloud = o3d.geometry.PointCloud()
-            # point_cloud.points = o3d.utility.Vector3dVector(verts_p_face[0].detach().cpu().numpy())
-            # point_cloud.colors = o3d.utility.Vector3dVector(colors.detach().cpu().numpy()*255)
-            # save_dir = '/home/haonan/data/HHAvatar/preprocess'
-            # o3d.io.write_point_cloud(os.path.join(save_dir, "contact_points_colored_points_head.ply"), point_cloud)
-            # breakpoint()
-            
-            # colors = torch.tensor([
-            #     [0.5, 0.5, 0.5],  # Green
-            # ], dtype=torch.float32).repeat(verts_p_hand[0].shape[0],1).float().cuda()
-            # red_color = torch.tensor([
-            #     [1, 0, 0],  # Red
-            # ], dtype=torch.float32).float().cuda()
-            # colors[contact_idx] = red_color
-            # point_cloud = o3d.geometry.PointCloud()
-            # point_cloud.points = o3d.utility.Vector3dVector(verts_p_hand[0].detach().cpu().numpy())
-            # point_cloud.colors = o3d.utility.Vector3dVector(colors.detach().cpu().numpy()*255)
-            # save_dir = '/home/haonan/data/HHAvatar/preprocess'
-            # o3d.io.write_point_cloud(os.path.join(save_dir, "contact_points_colored_points_hand.ply"), point_cloud)
-            # breakpoint()
-            ############
             
             mask_loss = 0
             depth_ranking_loss = 0
-            
-            # if k % 50 == 0:
-            # if k % 50 == 0 and k != 0 and k > 500:
             if k > 1000 and self.optimize_depth_rank:
                 trans_verts_hand = projection(verts_p_hand, cam_intrinsics, w2c_p)
                 trans_verts_hand_cam = projection(verts_p_hand, cam_intrinsics, w2c_p, no_intrinsics=True)
@@ -1291,24 +974,16 @@ class Optimizer(object):
                     pred_depth_images_head = pred_depth_images_head.reshape(-1,128,128)
                     pred_mask_head = pred_mask_head.reshape(-1,128,128).bool()
 
-                    # pred_depth_images, pred_mask = self.deca_optim.render_hand_head.render_depth(trans_verts[i:i+chunk_size], trans_verts_cam[i:i+chunk_size])
-                    # pred_depth_images = pred_depth_images.reshape(-1,128,128)
-                    # pred_mask = pred_mask.reshape(-1,128,128).bool()
-                    
                     pred_depth_images_hand_list.append(pred_depth_images_hand)
                     pred_mask_hand_list.append(pred_mask_hand)
                     pred_depth_images_head_list.append(pred_depth_images_head)
                     pred_mask_head_list.append(pred_mask_head)
-                    # pred_depth_images_list.append(pred_depth_images)
-                    # pred_mask_list.append(pred_mask)
-                
+
                 pred_depth_images_hand = torch.cat(pred_depth_images_hand_list, dim=0)
                 pred_mask_hand = torch.cat(pred_mask_hand_list, dim=0)
                 pred_depth_images_head = torch.cat(pred_depth_images_head_list, dim=0)
                 pred_mask_head = torch.cat(pred_mask_head_list, dim=0)
-                # pred_depth_images = torch.cat(pred_depth_images_list, dim=0)
-                # pred_mask = torch.cat(pred_mask_list, dim=0)
-                
+ 
                 b_hand_mask = hand_masks.clone().bool().cuda()
                 b_head_mask = head_masks.clone().bool().cuda()
                 b_depth_img = depth_images.clone().cuda()
@@ -1319,38 +994,31 @@ class Optimizer(object):
                 bbox_mask_head = modify_batched_masks(overlap_mask_hand.reshape(bz,128,128))
                 bbox_mask_head = bbox_mask_head & pred_mask_head.bool() & (~pred_mask_hand) & (~b_hand_mask.bool())
 
-                # # depth_ranking_loss = self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_head.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), (pred_mask_hand & b_hand_mask.bool()).reshape(bz,128,128), (pred_mask_head & b_head_mask.bool()).reshape(bz,128,128)) # whole hand and whole head
-                # # depth_ranking_loss = depth_ranking_loss + self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_head.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), overlap_mask_hand.reshape(bz,128,128), bbox_mask_head.reshape(bz,128,128)) # address the overlap area
-                # # depth_ranking_loss = depth_ranking_loss + self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_hand.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), (pred_mask_hand & b_hand_mask.bool()).reshape(bz,128,128), (pred_mask_hand & b_hand_mask.bool()).reshape(bz,128,128)) # to make sure the depth order inside the hand is correct (global orient)
-                
-                # depth_ranking_loss = self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_head.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), overlap_mask_hand.reshape(bz,128,128), bbox_mask_head.reshape(bz,128,128)) # address the overlap area
                 depth_ranking_loss = self.depth_ranking_loss(pred_depth_images_hand.reshape(bz,128,128), pred_depth_images_head.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), overlap_mask_hand.reshape(bz,128,128), (pred_mask_head & b_head_mask.bool()).reshape(bz,128,128)) # address the overlap area
-                
-                # depth_ranking_loss = self.depth_ranking_loss(pred_depth_images.reshape(bz,128,128), pred_depth_images.reshape(bz,128,128), b_depth_img.reshape(bz,128,128), (b_hand_mask.bool()).reshape(bz,128,128), (b_head_mask.bool()).reshape(bz,128,128)) # whole hand and whole head
                 
                 depth_ranking_loss = depth_ranking_loss * self.conf_loss['depth_rank_weight']
                 total_loss += depth_ranking_loss 
                 
-                # pred_mask_compose = torch.zeros_like(pred_mask_hand, dtype=torch.float, device=pred_mask_hand.device)
-                # pred_mask_hand = pred_mask_hand.bool()
-                # pred_mask_head = pred_mask_head.bool()
-                # overlap = pred_mask_hand & pred_mask_head
-                # hand_only = pred_mask_hand & ~overlap
-                # head_only = pred_mask_head & ~overlap
-                # pred_mask_compose[hand_only] = 1.
-                # pred_mask_compose[head_only] = 2.
-                # if overlap.any():
-                #     hand_depth_overlap = pred_depth_images_hand[overlap]
-                #     head_depth_overlap = pred_depth_images_head[overlap]
-                #     closer_hand = hand_depth_overlap < head_depth_overlap
-                #     pred_mask_compose[overlap] = torch.where(closer_hand, 1., 2.)
+                pred_mask_compose = torch.zeros_like(pred_mask_hand, dtype=torch.float, device=pred_mask_hand.device)
+                pred_mask_hand = pred_mask_hand.bool()
+                pred_mask_head = pred_mask_head.bool()
+                overlap = pred_mask_hand & pred_mask_head
+                hand_only = pred_mask_hand & ~overlap
+                head_only = pred_mask_head & ~overlap
+                pred_mask_compose[hand_only] = 1.
+                pred_mask_compose[head_only] = 2.
+                if overlap.any():
+                    hand_depth_overlap = pred_depth_images_hand[overlap]
+                    head_depth_overlap = pred_depth_images_head[overlap]
+                    closer_hand = hand_depth_overlap < head_depth_overlap
+                    pred_mask_compose[overlap] = torch.where(closer_hand, 1., 2.)
                     
-                # gt_mask_compose = torch.zeros_like(b_hand_mask).float().to(b_hand_mask.device)
-                # gt_mask_compose[b_hand_mask==True] = 1.
-                # gt_mask_compose[b_head_mask==True] = 2.
-                # mask_loss = self.cross_entropy_loss(pred_mask_compose[overlap], gt_mask_compose[overlap]) / float(overlap.sum()) 
-                # mask_loss = mask_loss * self.conf_loss['mask_weight']
-                # total_loss += mask_loss 
+                gt_mask_compose = torch.zeros_like(b_hand_mask).float().to(b_hand_mask.device)
+                gt_mask_compose[b_hand_mask==True] = 1.
+                gt_mask_compose[b_head_mask==True] = 2.
+                mask_loss = self.cross_entropy_loss(pred_mask_compose[overlap], gt_mask_compose[overlap]) / float(overlap.sum()) 
+                mask_loss = mask_loss * self.conf_loss['mask_weight']
+                total_loss += mask_loss 
                 
             opt_p.zero_grad()
             opt_t.zero_grad()
@@ -1360,24 +1028,13 @@ class Optimizer(object):
 
             # visualize
             if k % 100 == 0:
-                # if k > 198:
-                #     del trans_verts_hand, trans_verts_hand_cam, trans_verts_head, trans_verts_head_cam, trans_verts, trans_verts_cam
-                #     del b_hand_mask, b_head_mask, b_depth_img, pred_depth_images_hand, pred_mask_hand, pred_depth_images_head, pred_mask_head, pred_depth_images, pred_mask, pred_mask_compose, gt_mask_compose, bbox_mask_head
-                #     torch.cuda.empty_cache()
                 if k > 1000 and self.optimize_depth_rank:
                     del trans_verts_hand, trans_verts_hand_cam, trans_verts_head, trans_verts_head_cam, trans_verts, trans_verts_cam
                     del b_hand_mask, b_head_mask, b_depth_img
-                    # del pred_depth_images, pred_mask
-                    # del bbox_mask_head
                     del pred_depth_images_hand, pred_mask_hand, pred_depth_images_head, pred_mask_head
-                    # del pred_mask_compose, gt_mask_compose, overlap, hand_only, head_only, hand_depth_overlap, head_depth_overlap, closer_hand
                     torch.cuda.empty_cache()  # Frees up unused memory on GPU
                     gc.collect()  # Forces garbage collection
                 with torch.no_grad():
-                    # loss_info = '----iter: {}, time: {}\n'.format(k,
-                    #                                               datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S'))
-                    # loss_info = loss_info + f'landmark_loss: {landmark_loss2}'
-                    
                     loss_info = '----iter: {}, time: {}\n'.format(k,
                                                                 datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S'))
                     
@@ -1387,8 +1044,7 @@ class Optimizer(object):
                     acc_loss['contact_loss'] = contact_loss
                     acc_loss['mask_loss'] = mask_loss
                     acc_loss['depth_ranking_loss'] = depth_ranking_loss
-                    wandb.log(acc_loss)
-                    
+
                     loss_info = loss_info + f'landmark_loss: {landmark_loss2}' \
                                           + f', smooth_loss: {smooth_loss}'\
                                           + f', contact_loss: {contact_loss}' \
@@ -1396,21 +1052,6 @@ class Optimizer(object):
                                           + f', depth_ranking_loss: {depth_ranking_loss}' \
                                        
                     print(loss_info)
-                    
-                    # verts_p = torch.cat([verts_p_face, verts_p_hand], dim=1)
-                    # trans_verts = projection(verts_p[::50], cam_intrinsics, w2c_p[::50])
-                    # trans_verts_cam = projection(verts_p[::50], cam_intrinsics, w2c_p[::50], no_intrinsics=True)
-                    # shape_images = self.deca.render_hand_head.render_shape(verts_p[::50], trans_verts)
-                    # depth_images_vis, _ = self.deca.render_hand_head.render_depth(trans_verts, trans_verts_cam)
-                    # visdict = {
-                    #     # 'inputs': visualize_images,
-                    #     'gt_landmarks2d': util.tensor_vis_landmarks(visualize_images, landmark[::50], isScale=True),
-                    #     'landmarks2d': util.tensor_vis_landmarks(visualize_images, trans_landmarks2d.detach()[::50], isScale=True),
-                    #     'shape_images': shape_images,
-                    #     'depth_images': depth_images_vis
-                    # }
-                    # cv2.imwrite(os.path.join(savefolder, 'optimize_vis.jpg'), self.deca.visualize(visdict))
-                    
         # save vis video
         save_imgs_dir = os.path.join(savefolder, 'preprocess_shape_images')
         if not os.path.exists(save_imgs_dir):
@@ -1419,9 +1060,6 @@ class Optimizer(object):
             shutil.rmtree(save_imgs_dir)
             os.makedirs(save_imgs_dir)
 
-        contact_bbox_list = []
-        contact_bbox_2d_list = []
-        contact_map_list = []
         head_contact_idx_list = []
         for i in range(num_img):
             ### contact_bbox
@@ -1432,32 +1070,6 @@ class Optimizer(object):
             head_contact_idx = f.nn(hand_verts[hand_insides])
             if head_contact_idx.shape[0] > 0:
                 head_contact_idx = head_contact_idx[np.isin(head_contact_idx, flame_face_masks_full)]
-            
-            # contact_map = torch.zeros(verts_p_face[i].shape[0], 1)
-            # contact_map[head_contact_idx] = 1
-            # contact_bbox = None
-            # contact_bbox_2d = None
-            # if hand_insides.sum() > 0 and head_contact_idx.shape[0] > 0:
-            #     hand_verts_insides = hand_verts[hand_insides]
-            #     head_verts_contact = head_verts[head_contact_idx]
-            #     contact_verts = np.concatenate([head_verts_contact, hand_verts_insides], axis=0)
-            #     min_coords = np.min(contact_verts, axis=0).tolist()
-            #     max_coords = np.max(contact_verts, axis=0).tolist()
-            #     contact_bbox = min_coords + max_coords
-
-            #     head_verts_contact_2d = torch.tensor(head_verts_contact, dtype=torch.float32).reshape(1,-1,3).to(verts_p_face.device)
-            #     # 
-            #     trans_head_verts_contact_2d = projection(head_verts_contact_2d, cam_intrinsics, w2c_p[i][None,...])
-            #     trans_head_verts_contact_2d = trans_head_verts_contact_2d.detach().cpu().numpy()[...,:2]
-            #     trans_head_verts_contact_2d = trans_head_verts_contact_2d.reshape(-1, 2)
-            #     min_coords_2d = np.min(trans_head_verts_contact_2d, axis=0).tolist()
-            #     max_coords_2d = np.max(trans_head_verts_contact_2d, axis=0).tolist()
-            #     contact_bbox_2d = min_coords_2d + max_coords_2d
-            #     contact_bbox_2d = contact_bbox_2d * 4
-
-            # contact_bbox_list.append(contact_bbox)
-            # contact_bbox_2d_list.append(contact_bbox_2d)
-            # contact_map_list.append(contact_map)
             head_contact_idx_list.append(head_contact_idx)
             
 
@@ -1504,9 +1116,7 @@ class Optimizer(object):
 
         cmd = f'ffmpeg -framerate 20 -pattern_type glob -i "{save_imgs_dir}/*.jpg" -c:v libx264 -pix_fmt yuv420p -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -y {save_imgs_dir}/../preprocess_shape_images.mp4'
         os.system(cmd)
-        
-        # ffmpeg -framerate 20 -pattern_type glob -i "*.jpg" -c:v libx264 -pix_fmt yuv420p -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -y ../hamer.mp4
-        
+                
         save = True
         if save:
             dict = {}
@@ -1532,14 +1142,13 @@ class Optimizer(object):
                             'world_mat': w2c_p[idx].detach().cpu().numpy().tolist(),
                             'expression': exp[idx].detach().cpu().numpy().tolist(),
                             'scales_all': self.scales_all[idx].tolist(),
-                            # 'head_pose': face_full_pose[idx].detach().cpu().numpy().tolist(),
                             'pose': face_full_pose[idx].detach().cpu().numpy().tolist(),
-                            'head_transl': translation_f[idx].detach().cpu().numpy().tolist(),
+                            'head_transl': flame_transl[idx].detach().cpu().numpy().tolist(),
                             'global_orient': global_orient[idx].detach().cpu().numpy().tolist(),
                             'hand_pose': hand_poses[idx].detach().cpu().numpy().tolist(),
                             'betas': betas[idx].detach().cpu().numpy().tolist(),
                             'mano_scale': mano_scale[idx].detach().cpu().numpy().tolist(),
-                            'hand_transl': translation_v[idx].detach().cpu().numpy().tolist(),
+                            'hand_transl': mano_transl[idx].detach().cpu().numpy().tolist(),
                             'bbox': torch.stack(
                                 [torch.min(landmark[idx, :, 0]), torch.min(landmark[idx, :, 1]),
                                     torch.max(landmark[idx, :, 0]), torch.max(landmark[idx, :, 1])],
@@ -1550,9 +1159,6 @@ class Optimizer(object):
                                                 :2].detach().cpu().numpy().tolist(),
                             'gt_mano_keypoints': hand_landmarks[idx, :,
                                                 :2].detach().cpu().numpy().tolist(),
-                            # 'contact_bbox': contact_bbox_list[idx],
-                            # 'contact_bbox_2d': contact_bbox_2d_list[idx],
-                            # 'contact_map': contact_map_list[idx].detach().cpu().numpy().tolist(),
                             'flame_scale': flame_scale[idx].detach().cpu().numpy().tolist(),
                             })
 
@@ -1561,6 +1167,7 @@ class Optimizer(object):
             dict['cam_intrinsics'] = cam_intrinsics.detach().cpu().numpy().tolist()
             dict['shape_params'] = shape[0].detach().cpu().numpy().tolist()
             dict['shape_params_hand'] = betas.detach().cpu().numpy().tolist()
+            dict['translation_p'] = translation_p.detach().cpu().numpy().tolist()
             with open(os.path.join(savefolder, save_name + '.json'), 'w') as fp:
                 json.dump(dict, fp)
 
@@ -1620,7 +1227,7 @@ class Optimizer(object):
         if json_path is None:
             shape = torch.mean(shape, dim=0).unsqueeze(0)
         else:
-            shape = torch.tensor(json.load(open(json_path, 'r'))['shape_params_face']).float().cuda().unsqueeze(0)
+            shape = torch.tensor(json.load(open(json_path, 'r'))['shape_params']).float().cuda().unsqueeze(0)
         exps = torch.cat(exps, dim=0)
         face_landmarks = torch.stack(face_landmarks, dim=0)
         face_poses = torch.cat(face_poses, dim=0)
@@ -1639,23 +1246,12 @@ class Optimizer(object):
         lmk_files = [lmk_file_list[(int(name)-1)] for name in names]
 
         for idx, k in enumerate(mano_dict):
-            
-            # from pathlib import Path
-            # k_int = int(str(k).split('/')[-1][:-4])
-            # for zirui, HaMer fails in these frames
-            # if k_int == 961:
-            #     k_int_ = 960
-            #     k = Path(os.path.join('/'.join(str(k).split('/')[:-1]), '%07d.png'%k_int_))
-            
             global_orient.append(torch.tensor(mano_dict[k]['pred_mano_params']['global_orient']).float().cuda())
             hand_poses.append(torch.tensor(mano_dict[k]['pred_mano_params']['hand_pose']).float().cuda())
             betas.append(torch.tensor(mano_dict[k]['pred_mano_params']['betas']).float().cuda())
-            # name.append(str(k).split('/')[-1][:-4])
             hamer_landmark = np.array(mano_dict[k]['pred_kp_2d']).astype(np.float32)
             hamer_landmark = torch.tensor(hamer_landmark).float()[0,:,:2]
             hamer_lmk_thumb = hamer_landmark[1:5]#torch.tensor(hamer_landmark).float()[0,1:5,:2]
-            # hand_landmarks.append(hamer_landmark.float().cuda().unsqueeze(0))
-
             ### sapiens_lmks
             lmk_pth = lmk_files[idx]
             lmk_info = json.load(open(lmk_pth, 'r'))

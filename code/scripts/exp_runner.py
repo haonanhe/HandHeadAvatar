@@ -9,9 +9,8 @@ sys.path.append('../code')
 import argparse
 
 from scripts.train import TrainRunner
-from scripts.train_2hands import TrainRunner as TrainRunner_2hands
 from scripts.test import TestRunner
-from scripts.test_2hands import TestRunner as TestRunner_2hands
+
 
 if __name__ == '__main__':
 
@@ -36,36 +35,20 @@ if __name__ == '__main__':
         test_script = conf.get_string('train.test_script')
     except:
         test_script = None
-
+        
     if not opt.is_eval:
-        if train_script == 'train_2hands':
-            runner = TrainRunner_2hands(conf=opt.conf,
-                             nepochs=opt.nepoch,
-                             checkpoint=opt.checkpoint,
-                             is_continue=opt.is_continue,
-                             load_path=opt.load_path,
-                             wandb_workspace=opt.wandb_workspace,
-                             )
-        else:
-            runner = TrainRunner(conf=opt.conf,
-                                nepochs=opt.nepoch,
-                                checkpoint=opt.checkpoint,
-                                is_continue=opt.is_continue,
-                                load_path=opt.load_path,
-                                wandb_workspace=opt.wandb_workspace,
-                                )
+        runner = TrainRunner(conf=opt.conf,
+                            nepochs=opt.nepoch,
+                            checkpoint=opt.checkpoint,
+                            is_continue=opt.is_continue,
+                            load_path=opt.load_path,
+                            wandb_workspace=opt.wandb_workspace,
+                            )
     else:
-        if test_script is not None and test_script == 'test_2hands':
-            runner = TestRunner_2hands(conf=opt.conf,
+        runner = TestRunner(conf=opt.conf,
                             checkpoint=opt.checkpoint,
                             load_path=opt.load_path,
                             only_json=opt.only_json,
                             )
-        else:
-            runner = TestRunner(conf=opt.conf,
-                                checkpoint=opt.checkpoint,
-                                load_path=opt.load_path,
-                                only_json=opt.only_json,
-                                )
 
     runner.run()

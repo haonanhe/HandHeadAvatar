@@ -96,17 +96,6 @@ class HHDataset(torch.utils.data.Dataset):
                 camera_dict = json.load(f)
             
             frames = camera_dict['frames']
-            # frames = frames[30:31]
-            # frames = frames[60:61]
-            
-            # i = 1
-            # length = len(frames)//4
-            # start = length * i
-            # end = length * (i+1)
-            # frames = frames[start:end]
-            
-            # frames = frames[200:400]
-            # frames = frames[400:]
             
             for frame in frames:
                 image_path = '{0}/{1}.png'.format(instance_dir, frame["file_path"])
@@ -127,15 +116,6 @@ class HHDataset(torch.utils.data.Dataset):
                 R = cam[:3, :3].copy()
                 t = cam[:3, 3].copy()
                 # ######################################## for deca
-                # angle_radians = np.radians(180)
-                # R_Z = np.array([
-                #     [np.cos(angle_radians), -np.sin(angle_radians), 0],
-                #     [np.sin(angle_radians), np.cos(angle_radians), 0],
-                #     [0, 0, 1]
-                # ])
-                # R = np.dot(R_Z, R)
-                # t = np.dot(R_Z, t)
-
                 F_x = np.array([
                     [-1, 0, 0],
                     [0, 1, 0],

@@ -162,34 +162,6 @@ def get_camera_params(uv, pose, intrinsics):
     ray_dirs = F.normalize(ray_dirs, dim=2)
     return ray_dirs, cam_loc
 
-# def get_camera_params(uv, pose, intrinsics):
-#     if pose.shape[1] == 7: #In case of quaternion vector representation
-#         cam_loc = pose[:, 4:]
-#         R = quat_to_rot(pose[:,:4])
-#         p = torch.eye(4).repeat(pose.shape[0],1,1).cuda().float()
-#         p[:, :3, :3] = R
-#         p[:, :3, 3] = cam_loc
-#     else: # In case of pose matrix representation
-#         cam_loc = pose[:, :3, 3]
-#         p = pose
-
-#     batch_size, num_samples, _ = uv.shape
-#     depth = torch.ones((batch_size, num_samples)).cuda()
-#     # x_cam = uv[:, :, 0].view(batch_size, -1)
-#     # y_cam = uv[:, :, 1].view(batch_size, -1)
-#     # z_cam = depth.view(batch_size, -1) * -1.0
-#     x_cam = uv[:, :, 0].reshape(batch_size, -1)
-#     y_cam = uv[:, :, 1].reshape(batch_size, -1)
-#     z_cam = depth.reshape(batch_size, -1) * -1.0
-#     pixel_points_cam = lift(x_cam, y_cam, z_cam, intrinsics=intrinsics)
-#     # permute for batch matrix product
-#     pixel_points_cam = pixel_points_cam.permute(0, 2, 1)
-
-#     world_coords = torch.bmm(p, pixel_points_cam).reshape(batch_size,num_samples,-1)[:, :, :3]
-#     ray_dirs = world_coords - cam_loc[:, None, :]
-#     ray_dirs = F.normalize(ray_dirs, dim=2)
-#     return ray_dirs, cam_loc
-
 
 def get_camera_for_plot(pose):
     if pose.shape[1] == 7: #In case of quaternion vector representation

@@ -101,12 +101,6 @@ class TestRunner():
                 os.path.join(old_checkpnts_dir, self.input_params_subdir, str(kwargs['checkpoint']) + ".pth"))
             self.latent_codes = torch.nn.Embedding(data["latent_codes_state_dict"]['weight'].shape[0], 32, sparse=True).cuda()
             self.latent_codes.load_state_dict(data["latent_codes_state_dict"])
-        # if self.optimize_contact:
-        #     self.input_params_subdir = "InputParameters"
-        #     data = torch.load(
-        #         os.path.join(old_checkpnts_dir, self.input_params_subdir, str(kwargs['checkpoint']) + ".pth"))
-        #     self.latent_codes_nonrigid = torch.nn.Embedding(data["latent_codes_nonrigid_state_dict"]['weight'].shape[0], 32, sparse=True).cuda()
-        #     self.latent_codes_nonrigid.load_state_dict(data["latent_codes_nonrigid_state_dict"])
         if self.optimize_expression:
             self.input_params_subdir = "InputParameters"
             data = torch.load(
@@ -139,8 +133,6 @@ class TestRunner():
         self.img_res = self.plot_dataset.img_res
         self.plot_conf = self.conf.get_config('plot')
         
-        
-
     def run(self):
         self.model.geometry_network.alpha = float(self.start_epoch)
         print_all = True
@@ -151,42 +143,7 @@ class TestRunner():
             if img_index >= self.conf.get_int('plot.plot_nimgs') and not print_all:
                 break
             indices, model_input, ground_truth = next(eval_iterator)
-            
-            # # if model_input["img_name"].item() != 1041:
-            # if model_input["img_name"].item() != 1359:
-            # # if model_input["img_name"].item() != 1357:
-            # # if model_input["img_name"].item() != 1361:
-            #     continue
-            # else:
-            #     breakpoint()
-            
-            # if model_input["img_name"].item() != 1359 and model_input["img_name"].item() != 1357 and model_input["img_name"].item() != 1355:
-            #     continue
-            
-            # if model_input["img_name"].item() != 1041:
-            #     continue
-            
-            # if model_input["img_name"].item() != 1019 and model_input["img_name"].item() != 1021 and model_input["img_name"].item() != 1023 and model_input["img_name"].item() != 1025 and model_input["img_name"].item() != 1027 and model_input["img_name"].item() != 1029 and model_input["img_name"].item() != 1033 and model_input["img_name"].item() != 1037 and model_input["img_name"].item() != 1045 and model_input["img_name"].item() != 1047 and model_input["img_name"].item() != 1049:
-            #     continue
-            
-            # if model_input["img_name"].item() != 1043:
-            #     continue
-            
-            # if model_input["img_name"].item() != 169 and model_input["img_name"].item() != 173 and model_input["img_name"].item() != 177 and model_input["img_name"].item() != 789 and model_input["img_name"].item() != 785 and model_input["img_name"].item() != 793:
-            #     continue
-            
-            # if model_input["img_name"].item() != 1041 and model_input["img_name"].item() != 1359:
-            #     continue
-            
-            # if model_input["img_name"].item() != 765 and model_input["img_name"].item() != 763 and model_input["img_name"].item() != 769 and model_input["img_name"].item() != 771:
-            #     continue
-            
-            # if model_input["img_name"].item() != 1101 and model_input["img_name"].item() != 1009 and model_input["img_name"].item() != 1105 and model_input["img_name"].item() != 1107:
-            #     continue
-            
-            # if model_input["img_name"].item() != 789:
-            #     continue
-            
+
             for k, v in model_input.items():
                 try:
                     model_input[k] = v.cuda()
@@ -211,8 +168,6 @@ class TestRunner():
             if self.optimize_mano_pose:
                 model_input['mano_hand_pose'] = self.mano_pose(model_input["idx"]*self.subsample).squeeze(1).detach()
                 model_input['mano_transl'] = self.mano_transl(model_input["idx"]*self.subsample).squeeze(1).detach()
-            # model_input['optimize_contact'] = self.optimize_contact
-            # model_input['optimize_mano_pose'] = self.optimize_mano_pose
             split = utils.split_input(model_input, self.total_pixels, n_pixels=min(33000, self.img_res[0] * self.img_res[1]))
 
             res = []

@@ -19,7 +19,6 @@ from pytorch3d.ops import sample_points_from_meshes
 
 from model.geometry_network import GeometryNetwork
 from model.texture_network import RenderingNetwork
-from model.deformer_network import BackwardDeformer, NonrigidDeformer
 
 from model.monosdf_loss import compute_scale_and_shift
 
@@ -203,7 +202,7 @@ class HHAvatar(nn.Module):
                                                                'landmark_embedding_with_eyes.npy')
         deca_cfg.rasterizer_type = 'pytorch3d' # or 'standard'
         self.deca = DECA(config=deca_cfg, device=self.device, image_size=256, uv_size=256)
-        # self.deca = DECA(config=deca_cfg, device=device, image_size=512, uv_size=512)
+        # self.deca = DECA(config=deca_cfg, device=self.device, image_size=512, uv_size=512)
         # self.deca = DECA(config=deca_cfg, device=device, image_size=224, uv_size=224)
 
         color_mlp_dims = [128, 128, 128, 128]
@@ -424,7 +423,7 @@ class HHAvatar(nn.Module):
         if "depth" in input:
             # the following is to obtain consistent depth scaling for evaluation (plotting).
             if (not 'depth_scale' in input) or input['depth_scale'] is None:
-                # depth_scale, depth_shift = compute_scale_and_shift(depth_values_head[None, :, None], input["depth"][:, :, None], (head_mask & surface_mask)[None, :, None])
+                depth_scale, depth_shift = compute_scale_and_shift(depth_values_head[None, :, None], input["depth"][:, :, None], (head_mask & surface_mask)[None, :, None])
                 # depth_scale = depth_scale.item()
                 # depth_shift = depth_shift.item()
                 depth_scale = None
@@ -451,15 +450,6 @@ class HHAvatar(nn.Module):
         index_batch_values = torch.ones(points_head.shape[0]).long().cuda()
         index_batch_values[surface_mask] = index_batch
         flame_distance_values[surface_mask] = flame_distance.squeeze(0).squeeze(-1)
-        
-        # # calculate on canonical space
-        # knn_v = self.FLAMEServer.canonical_verts.unsqueeze(0).clone()
-        # differentiable_surface_points_c = others['pnts_c']
-        # flame_distance, index_batch, _ = ops.knn_points(differentiable_surface_points_c.unsqueeze(0), knn_v, K=1, return_nn=True)
-        # index_batch = index_batch.reshape(-1)
-        # index_batch_values = torch.ones(points_head.shape[0]).long().cuda()
-        # index_batch_values[surface_mask] = index_batch
-        # flame_distance_values[surface_mask] = flame_distance.squeeze(0).squeeze(-1)
         
         output = {
             'points_head': points_head,
@@ -548,11 +538,8 @@ class HHAvatar(nn.Module):
 
             points_hand = (cam_loc.unsqueeze(1) + dists_hand.reshape(batch_size, num_pixels, 1) * ray_dirs).reshape(-1, 3)
             output['points_hand'] = points_hand
+            
 
-        # sdf_output_hand, canonical_points_hand, _, others_hand = self.query_sdf_hand(points_hand, verts=verts_hand)
-        
-        # output['sdf_output_hand'] = sdf_output_hand
-        
         trans_verts_hand = projection(verts_hand, cam_intrinsics, w2c_p)
         trans_verts_hand_cam = projection(verts_hand, cam_intrinsics, w2c_p, no_intrinsics=True)
         landmarks3d_p_hand = mano_output.joints.clone()
@@ -604,7 +591,6 @@ class HHAvatar(nn.Module):
             normal_values_hand[surface_mask_hand] = normal_image_hand[surface_mask_hand]
             depth_values_hand[surface_mask_hand] = depth_image_hand[surface_mask_hand]
 
-        # output['points_hand'] = points_hand
         output['rgb_values_hand'] = rgb_values_hand
         output['normal_values_hand'] = normal_values_hand
         output['depth_values_hand'] = depth_values_hand
@@ -626,171 +612,143 @@ class HHAvatar(nn.Module):
         if 'optimize_mano_pose' in input.keys():
             output['optimize_mano_pose'] = input['optimize_mano_pose']
         ##################################################################################################################
-            
-        # if "depth" in input:
-        #     max_depth = 6.0
-        #     min_depth = 3.0
-        #     batch_size = pose.shape[0]
-        #     num_samples_head = int(rgb_values_head.shape[0] / batch_size)
-        #     depth_head = torch.ones(batch_size * num_samples_head).cuda().float() * max_depth
-        #     depth_head[pred_head_mask] = rend_util.get_depth(points_head.reshape(batch_size, num_samples_head, 3), pose).reshape(-1)[pred_head_mask]
-        #     depth_head = (depth_head.reshape(batch_size, num_samples_head, 1) - min_depth) / (max_depth - min_depth)
-
-        #     num_samples_hand = int(rgb_values_hand.shape[0] / batch_size)
-        #     depth_hand = torch.ones(batch_size * num_samples_hand).cuda().float() * max_depth
-        #     depth_hand[pred_hand_mask] = rend_util.get_depth(points_hand.reshape(batch_size, num_samples_hand, 3), pose).reshape(-1)[pred_hand_mask]
-        #     depth_hand = (depth_hand.reshape(batch_size, num_samples_hand, 1) - min_depth) / (max_depth - min_depth)
-
-        #     depth_head = depth_head.reshape(-1)
-        #     depth_hand = depth_hand.reshape(-1)
-        #     depth_head_before_hand_mask = (depth_head < depth_hand).bool()
-        #     depth_hand_before_head_mask = (depth_head > depth_hand).bool()
-        #     output['depth_head_before_hand_mask'] = depth_head_before_hand_mask
-        #     output['depth_hand_before_head_mask'] = depth_hand_before_head_mask
-        
         if self.training:
             sdf_sampleflamebbox_tohead, sdf_sampleflamebbox_toflame = self.query_sdf_flame_bbox(network_condition) # for points in the flame mesh bbox
             output['sdf_sampleflamebbox_tohead'] = sdf_sampleflamebbox_tohead
             output['sdf_sampleflamebbox_toflame'] = sdf_sampleflamebbox_toflame
-            
-        # optimize_contact = input['optimize_contact']
-        # output['optimize_contact'] = optimize_contact
+
         if 'optimize_contact' in input.keys() and input['optimize_contact'] == True:
             optimize_contact = True
         else: 
             optimize_contact = False
         output['optimize_contact'] = optimize_contact
+        
         if self.training and optimize_contact:
-            output['surface_output'] = surface_output # sdf value of the surface of head
-            
-            # # sdf value of points on hand relative to head
-            # sdf_onhand_tohead, _, _, others_onhand_tohead = self.query_sdf(points_hand, network_condition, deformer_condition,
-            #                                                     pose_feature=pose_feature, betas=expression,
-            #                                                     transformations=transformations, 
-            #                                                     transl=flame_transl, 
-            #                                                     nonrigid_params=nonrigid_params)
-            # output['sdf_onhand_tohead'] = sdf_onhand_tohead
-            # output['nonrigid_deformation_onhand_tohead'] = others_onhand_tohead['nonrigid_deformation']
-            
-            
-            meshes_hand = Meshes(verts_hand.reshape(1,-1,3), self.mano_faces.reshape(1,-1,3))
-            samples_hand = sample_points_from_meshes(meshes_hand, num_samples=100000, return_normals=False, return_textures=False)
-            samples_hand = samples_hand.reshape(-1,3)
-            
-            # Add Gaussian noise scaled to 1e-1
-            noise_hand = torch.randn_like(samples_hand) * 1e-2
-            samples_hand = samples_hand + noise_hand.to(samples_hand.device)
-            
-            sdf_sampleonhand_tohead, _, _, others_sampleonhand_tohead = self.query_sdf(samples_hand, network_condition, deformer_condition,
-                                                                            pose_feature=pose_feature, betas=expression,
-                                                                            transformations=transformations, 
-                                                                            transl=flame_transl, 
-                                                                            nonrigid_params=nonrigid_params)
-            output['sdf_sampleonhand_tohead'] = sdf_sampleonhand_tohead
-            output['nonrigid_deformation_sampleonhand_tohead'] = others_sampleonhand_tohead['nonrigid_deformation']
-            
-            with torch.no_grad():
+            if (not 'sdf_hand_mask' in input) or input['sdf_hand_mask'] is None:
+                surface_output_values = torch.ones(points_head.shape[0], 1).float().cuda()
+                surface_output_values[surface_mask] = surface_output
+                output['surface_output'] = surface_output_values # sdf value of the surface of head
+                
+                meshes_hand = Meshes(verts_hand.reshape(1,-1,3), self.mano_faces.reshape(1,-1,3))
+                samples_hand = sample_points_from_meshes(meshes_hand, num_samples=100000, return_normals=False, return_textures=False)
+                samples_hand = samples_hand.reshape(-1,3)
+                
+                # # Add Gaussian noise scaled to 1e-1
+                # noise_hand = torch.randn_like(samples_hand) * 1e-2
+                # samples_hand = samples_hand + noise_hand.to(samples_hand.device)
+                
+                sdf_sampleonhand_tohead, _, _, others_sampleonhand_tohead = self.query_sdf(samples_hand, network_condition, deformer_condition,
+                                                                                pose_feature=pose_feature, betas=expression,
+                                                                                transformations=transformations, 
+                                                                                transl=flame_transl, 
+                                                                                nonrigid_params=nonrigid_params)
+                output['sdf_sampleonhand_tohead'] = sdf_sampleonhand_tohead
+                output['nonrigid_deformation_sampleonhand_tohead'] = others_sampleonhand_tohead['nonrigid_deformation']
+                
                 sdf_sampleonhand, _, _, _ = self.query_sdf_hand(samples_hand, verts=verts_hand)
                 output['sdf_sampleonhand'] = sdf_sampleonhand 
             
-            with torch.no_grad():
+
                 sdf_onhead_tohand, _, _, _ = self.query_sdf_hand(points_head, verts=verts_hand)
                 output['sdf_onhead_tohand'] = sdf_onhead_tohand 
+    
+                # sdf_onhead_tohand_values = torch.ones(points_head.shape[0], 1).float().cuda()
+                # sdf_onhead_tohand_values[surface_mask] = sdf_onhead_tohand.unsqueeze(-1)[surface_mask]
+                # output['sdf_onhead_tohand_surface'] = sdf_onhead_tohand_values
             
-            meshes_head = Meshes(verts_head.reshape(1,-1,3), self.FLAMEServer.faces_tensor.reshape(1,-1,3))
-            samples_head = sample_points_from_meshes(meshes_head, num_samples=100000, return_normals=False, return_textures=False)
-            samples_head = samples_head.reshape(-1,3)
-            
-            # # Add Gaussian noise scaled to 1e-1
-            # noise = torch.randn_like(samples_head) * 1e-2
-            # samples_head = samples_head + noise.to(samples_head.device)
-            
-            sdf_sampleonhead, _, _, others_sampleonhead = self.query_sdf(samples_head, network_condition, deformer_condition,
-                                                            pose_feature=pose_feature, betas=expression,
-                                                            transformations=transformations, 
-                                                            transl=flame_transl, 
-                                                            nonrigid_params=nonrigid_params)
-            output['sdf_sampleonhead'] = sdf_sampleonhead
-            output['nonrigid_deformation_sampleonhead'] = others_sampleonhead['nonrigid_deformation']
-            with torch.no_grad():
+                meshes_head = Meshes(verts_head.reshape(1,-1,3), self.FLAMEServer.faces_tensor.reshape(1,-1,3))
+                samples_head = sample_points_from_meshes(meshes_head, num_samples=10000, return_normals=False, return_textures=False)
+                samples_head = samples_head.reshape(-1,3)
+                
+                # # Add Gaussian noise scaled to 1e-1
+                # noise = torch.randn_like(samples_head) * 1e-2
+                # samples_head = samples_head + noise.to(samples_head.device)
+                
+                sdf_sampleonhead, _, _, others_sampleonhead = self.query_sdf(samples_head, network_condition, deformer_condition,
+                                                                pose_feature=pose_feature, betas=expression,
+                                                                transformations=transformations, 
+                                                                transl=flame_transl, 
+                                                                nonrigid_params=nonrigid_params)
+                output['sdf_sampleonhead'] = sdf_sampleonhead
+                output['nonrigid_deformation_sampleonhead'] = others_sampleonhead['nonrigid_deformation']
+      
                 sdf_sampleonhead_tohand, _, _, _ = self.query_sdf_hand(samples_head, verts=verts_hand)
                 output['sdf_sampleonhead_tohand'] = sdf_sampleonhead_tohand
+
+                # output['sdf_hand_mask'] = (sdf_sampleonhand_tohead.reshape(-1) < 0) &  (sdf_sampleonhand.reshape(-1) < 0)
+                # margin = 1e-5
+                margin = 1e-6
+                # margin = 5e-7
+                # surface_mask = (sdf_sampleonhand_tohead < 0) & (-margin < sdf_sampleonhand) & (sdf_sampleonhand < 0)
+                surface_mask = (sdf_sampleonhand_tohead < 0) & (-margin < sdf_sampleonhand) & (sdf_sampleonhand < margin)
+                # surface_mask = (sdf_sampleonhand_tohead < 0) & (sdf_sampleonhand < 0)
+                output['sdf_hand_mask'] = surface_mask
+                # output['sdf_head_mask'] = (sdf_sampleonhead_tohand.reshape(-1) < 0) &  (sdf_sampleonhead.reshape(-1) < 0)
+                output['samples_hand'] = samples_hand
+                # output['samples_head'] = samples_head
                 
-            # ### save vis contact point
-            # colors = torch.tensor([
-            #     [0.5, 0.5, 0.5],  # Green
-            # ], dtype=torch.float32).repeat(samples_hand.shape[0],1).float().cuda()
+            else:
+                samples_hand = input['samples_hand'].cuda()
+                # samples_head = input['samples_head']
+                sdf_hand_mask = input['sdf_hand_mask'].cuda()
+                # sdf_head_mask = input['sdf_head_mask']
+                
+                surface_output_values = torch.ones(points_head.shape[0], 1).float().cuda()
+                surface_output_values[surface_mask] = surface_output
+                output['surface_output'] = surface_output_values # sdf value of the surface of head
+                
+                meshes_hand = Meshes(verts_hand.reshape(1,-1,3), self.mano_faces.reshape(1,-1,3))
+                samples_hand = sample_points_from_meshes(meshes_hand, num_samples=100000, return_normals=False, return_textures=False)
+                samples_hand = samples_hand.reshape(-1,3)
+                
+                # # Add Gaussian noise scaled to 1e-1
+                # noise_hand = torch.randn_like(samples_hand) * 1e-2
+                # samples_hand = samples_hand + noise_hand.to(samples_hand.device)
+                
+                sdf_sampleonhand_tohead, _, _, others_sampleonhand_tohead = self.query_sdf(samples_hand, network_condition, deformer_condition,
+                                                                                pose_feature=pose_feature, betas=expression,
+                                                                                transformations=transformations, 
+                                                                                transl=flame_transl, 
+                                                                                nonrigid_params=nonrigid_params)
+                output['sdf_sampleonhand_tohead'] = sdf_sampleonhand_tohead
+                output['nonrigid_deformation_sampleonhand_tohead'] = others_sampleonhand_tohead['nonrigid_deformation']
+                
+                sdf_sampleonhand, _, _, _ = self.query_sdf_hand(samples_hand, verts=verts_hand)
+                output['sdf_sampleonhand'] = sdf_sampleonhand 
             
-            # red_color = torch.tensor([
-            #     [1, 0, 0],  # Red
-            # ], dtype=torch.float32).float().cuda()
 
-            # if_contact = (sdf_sampleonhand_tohead.reshape(-1) < 0) & (sdf_sampleonhand.reshape(-1) < 0)
-            # colors[if_contact] = red_color
-            # # Save the points with colors to a .ply file
-            # from pytorch3d.io import save_ply
-            # # save_dir = '/home/haonan/data/HHAvatar/data/experiments/haonan/haonan_headonly_depthw1_flamesdfw1_flamedistw10000_contactonly_contactsdf10_contactreg100000/rgb/eval/rgb/rendering/contact_points'
-            # save_dir = '/home/haonan/data/HHAvatar'
-            # if not os.path.exists(save_dir):
-            #     os.makedirs(save_dir)
-            # import open3d as o3d
-            # point_cloud = o3d.geometry.PointCloud()
-            # point_cloud.points = o3d.utility.Vector3dVector(samples_hand.detach().cpu().numpy())
-            # point_cloud.colors = o3d.utility.Vector3dVector(colors.detach().cpu().numpy()*255)
-            # img_name = input["img_name"]
-            # o3d.io.write_point_cloud(os.path.join(save_dir, "contact_points_colored_samples_hand_%06d.ply"%int(img_name)), point_cloud)
+                sdf_onhead_tohand, _, _, _ = self.query_sdf_hand(points_head, verts=verts_hand)
+                output['sdf_onhead_tohand'] = sdf_onhead_tohand 
+    
+                # sdf_onhead_tohand_values = torch.ones(points_head.shape[0], 1).float().cuda()
+                # sdf_onhead_tohand_values[surface_mask] = sdf_onhead_tohand.unsqueeze(-1)[surface_mask]
+                # output['sdf_onhead_tohand_surface'] = sdf_onhead_tohand_values
             
-            # breakpoint()
-            
-            # colors = torch.tensor([
-            #     [0.5, 0.5, 0.5],  # Green
-            # ], dtype=torch.float32).repeat(points_hand.shape[0],1).float().cuda()
-            
-            # red_color = torch.tensor([
-            #     [1, 0, 0],  # Red
-            # ], dtype=torch.float32).float().cuda()
+                meshes_head = Meshes(verts_head.reshape(1,-1,3), self.FLAMEServer.faces_tensor.reshape(1,-1,3))
+                samples_head = sample_points_from_meshes(meshes_head, num_samples=10000, return_normals=False, return_textures=False)
+                samples_head = samples_head.reshape(-1,3)
+                
+                # Add Gaussian noise scaled to 1e-1
+                noise = torch.randn_like(samples_head) * 1e-2
+                samples_head = samples_head + noise.to(samples_head.device)
+                
+                sdf_sampleonhead, _, _, others_sampleonhead = self.query_sdf(samples_head, network_condition, deformer_condition,
+                                                                pose_feature=pose_feature, betas=expression,
+                                                                transformations=transformations, 
+                                                                transl=flame_transl, 
+                                                                nonrigid_params=nonrigid_params)
+                output['sdf_sampleonhead'] = sdf_sampleonhead
+                output['nonrigid_deformation_sampleonhead'] = others_sampleonhead['nonrigid_deformation']
+      
+                sdf_sampleonhead_tohand, _, _, _ = self.query_sdf_hand(samples_head, verts=verts_hand)
+                output['sdf_sampleonhead_tohand'] = sdf_sampleonhead_tohand
 
-            # if_contact = (sdf_onhand_tohead.reshape(-1) < 0) & (sdf_output_hand.reshape(-1) < 0)
-            # colors[if_contact] = red_color
-            # point_cloud = o3d.geometry.PointCloud()
-            # point_cloud.points = o3d.utility.Vector3dVector(points_hand.detach().cpu().numpy())
-            # point_cloud.colors = o3d.utility.Vector3dVector(colors.detach().cpu().numpy()*255)
-            # img_name = input["img_name"]
-            # o3d.io.write_point_cloud(os.path.join(save_dir, "contact_points_colored_points_hand_%06d.ply"%int(img_name)), point_cloud)
-            
-            # colors = torch.tensor([
-            #     [0.5, 0.5, 0.5],  # Green
-            # ], dtype=torch.float32).repeat(points_head.shape[0],1).float().cuda()
-            
-            # red_color = torch.tensor([
-            #     [1, 0, 0],  # Red
-            # ], dtype=torch.float32).float().cuda()
 
-            # if_contact = (sdf_output_head.reshape(-1) < 0) & (sdf_onhead_tohand.reshape(-1) < 0)
-            # colors[if_contact] = red_color
-            # point_cloud = o3d.geometry.PointCloud()
-            # point_cloud.points = o3d.utility.Vector3dVector(points_head.detach().cpu().numpy())
-            # point_cloud.colors = o3d.utility.Vector3dVector(colors.detach().cpu().numpy()*255)
-            # img_name = input["img_name"]
-            # o3d.io.write_point_cloud(os.path.join(save_dir, "contact_points_colored_points_head_%06d.ply"%int(img_name)), point_cloud)
-            
-            # colors = torch.tensor([
-            #     [0.5, 0.5, 0.5],  # Green
-            # ], dtype=torch.float32).repeat(samples_head.shape[0],1).float().cuda()
-            
-            # red_color = torch.tensor([
-            #     [1, 0, 0],  # Red
-            # ], dtype=torch.float32).float().cuda()
+                output['sdf_hand_mask'] = sdf_hand_mask
+                # output['sdf_head_mask'] = sdf_head_mask
+                output['samples_hand'] = samples_hand
+                # output['samples_head'] = samples_head
 
-            # if_contact = (sdf_sampleonhead.reshape(-1) < 0) & (sdf_sampleonhead_tohand.reshape(-1) < 0)
-            # colors[if_contact] = red_color
-            # point_cloud = o3d.geometry.PointCloud()
-            # point_cloud.points = o3d.utility.Vector3dVector(samples_head.detach().cpu().numpy())
-            # point_cloud.colors = o3d.utility.Vector3dVector(colors.detach().cpu().numpy()*255)
-            # img_name = input["img_name"]
-            # o3d.io.write_point_cloud(os.path.join(save_dir, "contact_points_colored_samples_head_%06d.ply"%int(img_name)), point_cloud)
-            # breakpoint()
-        
         if not return_sdf:
             return output
         else:

@@ -256,6 +256,103 @@ class BackwardDeformer(nn.Module):
         others = {'lbs_weight': lbs_weights, 'posedirs': posedirs, 'shapedirs': shapedirs, 'x': x}
         return pts_c, others
 
+# class NonrigidDeformer(nn.Module):
+#     def __init__(self,
+#                  d_in,
+#                  d_out,
+#                  condition_in,
+#                  dims,
+#                  multires,
+#                  weight_norm=True,):
+#         super().__init__()
+#         mlp_dims = dims
+#         dims = [d_in] + mlp_dims + [d_out]
+#         self.condition_in = condition_in
+#         self.embed_fn = None
+#         if multires > 0:
+#             embed_fn, input_ch = get_embedder(multires)
+#             self.embed_fn = embed_fn
+#             dims[0] += input_ch - 3
+
+#         self.num_layers = len(dims)
+
+#         for l in range(0, self.num_layers - 2):
+#             out_dim = dims[l + 1]
+#             lin = nn.Linear(dims[l], out_dim)
+
+#             if multires > 0 and l == 0:
+#                 torch.nn.init.constant_(lin.bias, 0.0)
+#                 torch.nn.init.constant_(lin.weight[:, 3:], 0.0)
+#                 torch.nn.init.normal_(lin.weight[:, :3], 0.0, np.sqrt(2) / np.sqrt(out_dim))
+#             else:
+#                 torch.nn.init.constant_(lin.bias, 0.0)
+#                 torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
+
+#             if weight_norm:
+#                 lin = nn.utils.weight_norm(lin)
+
+#             setattr(self, "lin" + str(l), lin)
+
+#         self.lin_out = nn.Linear(dims[self.num_layers - 2], d_out)
+#         torch.nn.init.constant_(self.lin_out.bias, 0.0)
+#         torch.nn.init.constant_(self.lin_out.weight, 0.0)
+
+#         self.softplus = nn.Softplus(beta=100)
+        
+#         param_dims = [30] + mlp_dims + [30]
+#         self.param_num_layers = len(param_dims)
+
+#         for l in range(0, self.param_num_layers - 2):
+#             out_dim = param_dims[l + 1]
+#             lin = nn.Linear(param_dims[l], out_dim)
+
+#             if multires > 0 and l == 0:
+#                 torch.nn.init.constant_(lin.bias, 0.0)
+#                 torch.nn.init.constant_(lin.weight[:, 3:], 0.0)
+#                 torch.nn.init.normal_(lin.weight[:, :3], 0.0, np.sqrt(2) / np.sqrt(out_dim))
+#             else:
+#                 torch.nn.init.constant_(lin.bias, 0.0)
+#                 torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
+
+#             if weight_norm:
+#                 lin = nn.utils.weight_norm(lin)
+
+#             setattr(self, "param_lin" + str(l), lin)
+
+#         self.param_lin_out = nn.Linear(param_dims[self.param_num_layers - 2], param_dims[-1])
+#         torch.nn.init.constant_(self.param_lin_out.bias, 0.0)
+#         torch.nn.init.constant_(self.param_lin_out.weight, 0.0)
+        
+        
+#     def forward(self, points, transl=None, nonrigid_params=None):
+#         if transl is not None:
+#             points = points - transl.reshape(-1, 3)
+
+#         if self.embed_fn is not None:
+#             points = self.embed_fn(points)
+            
+#         x = points
+
+#         for l in range(0, self.num_layers - 2):
+#             lin = getattr(self, "lin" + str(l))
+#             x = lin(x)
+#             x = self.softplus(x)
+
+#         nonrigid_dir = self.lin_out(x).reshape(-1, 3, 30)
+        
+#         ###
+#         for l in range(0, self.param_num_layers - 2):
+#             lin = getattr(self, "param_lin" + str(l))
+#             nonrigid_params = lin(nonrigid_params)
+#             nonrigid_params = self.softplus(nonrigid_params)
+
+#         nonrigid_params = self.param_lin_out(nonrigid_params).reshape(-1, 30)
+#         ###
+ 
+#         nonrigid_deformation = torch.einsum('ml,mkl->mk', [nonrigid_params.expand(points.shape[0], -1), nonrigid_dir])
+
+#         return {'nonrigid_deformation': nonrigid_deformation, 'nonrigid_dir': nonrigid_dir}
+
 class NonrigidDeformer(nn.Module):
     def __init__(self,
                  d_in,
@@ -275,6 +372,8 @@ class NonrigidDeformer(nn.Module):
             dims[0] += input_ch - 3
 
         self.num_layers = len(dims)
+        
+        dims[0] += 30
 
         for l in range(0, self.num_layers - 2):
             out_dim = dims[l + 1]
@@ -331,7 +430,20 @@ class NonrigidDeformer(nn.Module):
         if self.embed_fn is not None:
             points = self.embed_fn(points)
             
-        x = points
+        ###
+        for l in range(0, self.param_num_layers - 2):
+            lin = getattr(self, "param_lin" + str(l))
+            nonrigid_params = lin(nonrigid_params)
+            nonrigid_params = self.softplus(nonrigid_params)
+
+        z = self.param_lin_out(nonrigid_params).reshape(-1, 30)
+        ###
+        
+        num_pixels = int(points.shape[0] / z.shape[0])
+        z = z.unsqueeze(1).expand(-1, num_pixels, -1).reshape(-1, 30)
+        x = torch.cat([points, z], dim=1)
+            
+        # x = points
 
         for l in range(0, self.num_layers - 2):
             lin = getattr(self, "lin" + str(l))
@@ -340,18 +452,122 @@ class NonrigidDeformer(nn.Module):
 
         nonrigid_dir = self.lin_out(x).reshape(-1, 3, 30)
         
-        ###
-        for l in range(0, self.param_num_layers - 2):
-            lin = getattr(self, "param_lin" + str(l))
-            nonrigid_params = lin(nonrigid_params)
-            nonrigid_params = self.softplus(nonrigid_params)
-
-        nonrigid_params = self.param_lin_out(nonrigid_params).reshape(-1, 30)
-        ###
- 
-        nonrigid_deformation = torch.einsum('ml,mkl->mk', [nonrigid_params.expand(points.shape[0], -1), nonrigid_dir])
+        # z = torch.nn.functional.softmax(20 * z, dim=1)
+        nonrigid_deformation = torch.einsum('ml,mkl->mk', [z.expand(points.shape[0], -1), nonrigid_dir])
 
         return {'nonrigid_deformation': nonrigid_deformation, 'nonrigid_dir': nonrigid_dir}
+
+# class NonrigidDeformer(nn.Module):
+#     def __init__(self,
+#                  d_in,           # 3 (x, y, z)
+#                  d_out,          # 90 (reshape to 3, 30)
+#                  condition_in,   # 30 (nonrigid_params dim)
+#                  dims,
+#                  multires,
+#                  weight_norm=True):
+#         super().__init__()
+#         self.condition_in = condition_in
+#         self.embed_fn = None
+#         if multires > 0:
+#             embed_fn, input_ch = get_embedder(multires)
+#             self.embed_fn = embed_fn
+#             d_in_encoded = input_ch
+#         else:
+#             d_in_encoded = d_in
+
+#         # -----------------------------
+#         # MLP for nonrigid_params: z -> processed_z
+#         # 将 condition 映射到更合适的表示
+#         param_dims = [condition_in] + dims + [condition_in]
+#         self.param_num_layers = len(param_dims)
+
+#         for l in range(self.param_num_layers - 1):
+#             in_dim = param_dims[l]
+#             out_dim = param_dims[l + 1]
+#             lin = nn.Linear(in_dim, out_dim)
+
+#             init_weight = np.sqrt(2) / np.sqrt(out_dim)
+#             torch.nn.init.normal_(lin.weight, 0.0, init_weight)
+#             torch.nn.init.constant_(lin.bias, 0.0)
+
+#             if weight_norm:
+#                 lin = nn.utils.weight_norm(lin)
+#             setattr(self, "param_lin" + str(l), lin)
+
+#         self.param_activation = nn.Softplus(beta=100)
+#         self.param_out_dim = condition_in
+
+#         # -----------------------------
+#         # MLP for nonrigid_dir: (x, processed_z) -> nonrigid_dir
+#         # 输入是 position embedding + condition
+#         mlp_input_dim = d_in_encoded + self.param_out_dim  # x + z
+#         mlp_dims = [mlp_input_dim] + dims + [d_out]  # d_out = 90
+#         self.num_layers = len(mlp_dims)
+
+#         self.softplus = nn.Softplus(beta=100)
+
+#         for l in range(self.num_layers - 1):
+#             in_dim = mlp_dims[l]
+#             out_dim = mlp_dims[l + 1]
+#             lin = nn.Linear(in_dim, out_dim)
+
+#             init_weight = np.sqrt(2) / np.sqrt(out_dim)
+#             if multires > 0 and l == 0:
+#                 torch.nn.init.constant_(lin.bias, 0.0)
+#                 torch.nn.init.constant_(lin.weight[:, 3:], 0.0)
+#                 torch.nn.init.normal_(lin.weight[:, :3], 0.0, init_weight)
+#             else:
+#                 torch.nn.init.normal_(lin.weight, 0.0, init_weight)
+#                 torch.nn.init.constant_(lin.bias, 0.0)
+
+#             if weight_norm:
+#                 lin = nn.utils.weight_norm(lin)
+#             setattr(self, "dir_lin" + str(l), lin)
+
+#     def forward(self, points, transl=None, nonrigid_params=None):
+#         # points: (B, 3)
+#         # nonrigid_params: (1, 30) or (B, 30) —— per-frame code
+#         if transl is not None:
+#             points = points - transl.reshape(-1, 3)
+
+#         # Embed points
+#         if self.embed_fn is not None:
+#             points = self.embed_fn(points)  # (B, d_in_encoded)
+
+#         # Process nonrigid_params
+#         z = nonrigid_params  # (B, 30) or (1, 30)
+#         for l in range(self.param_num_layers - 1):
+#             lin = getattr(self, "param_lin" + str(l))
+#             z = lin(z)
+#             z = self.param_activation(z)  # Softplus
+
+#         # Broadcast z to match points batch size
+#         B = points.shape[0]
+#         if z.shape[0] == 1:
+#             z = z.expand(B, -1)  # (1, 30) -> (B, 30)
+#         else:
+#             assert z.shape[0] == B
+
+#         # Concatenate condition with points
+#         x = torch.cat([points, z], dim=-1)  # (B, d_in_encoded + 30)
+  
+#         # Forward through dir MLP
+#         for l in range(self.num_layers - 1):
+#             lin = getattr(self, "dir_lin" + str(l))
+#             x = lin(x)
+#             if l < self.num_layers - 2:  # 不在最后一层加激活
+#                 x = self.softplus(x)
+
+#         nonrigid_dir = x.reshape(-1, 3, 30)  # (B, 3, 30)
+
+#         # Final deformation: (B, 30) @ (B, 3, 30) -> (B, 3)
+#         nonrigid_deformation = torch.einsum('ml,mkl->mk', z.expand(B, -1), nonrigid_dir)
+
+#         return {
+#             'nonrigid_deformation': nonrigid_deformation,
+#             'nonrigid_dir': nonrigid_dir,
+#             'nonrigid_params': nonrigid_params  # 可选返回
+#         }
     
 # class NonrigidDeformer(nn.Module):
 #     def __init__(self,

@@ -189,35 +189,40 @@ class TrainRunner():
         if is_continue:
             old_checkpnts_dir = os.path.join(load_path, 'checkpoints')
 
-            saved_model_state = torch.load(
-                os.path.join(old_checkpnts_dir, 'ModelParameters', str(kwargs['checkpoint']) + ".pth"))
-            self.model.load_state_dict(saved_model_state["model_state_dict"])
-            self.start_epoch = saved_model_state['epoch']
-            
-            
-            # # Filter Nonrigid Deformer
-            # # 加载保存的模型状态
-            # saved_model_state = torch.load(
-            #     os.path.join(old_checkpnts_dir, 'ModelParameters', str(kwargs['checkpoint']) + ".pth")
-            # )
-            # # 获取模型的 state_dict
-            # model_state_dict = saved_model_state["model_state_dict"]
-            # # 创建一个新的 state_dict，排除 nonrigid_deformer 的参数
-            # filtered_state_dict = {
-            #     k: v for k, v in model_state_dict.items()
-            #     if not k.startswith("nonrigid_deformer.")
-            # }
-            # # 加载过滤后的参数
-            # self.model.load_state_dict(filtered_state_dict, strict=False)  # 注意：strict=False
-            # # 恢复其他信息（如 epoch）
-            # self.start_epoch = saved_model_state['epoch']
-            
+            try:
+                saved_model_state = torch.load(
+                    os.path.join(old_checkpnts_dir, 'ModelParameters', str(kwargs['checkpoint']) + ".pth"))
+                self.model.load_state_dict(saved_model_state["model_state_dict"])
+                self.start_epoch = saved_model_state['epoch']
+            except:
+                # Filter Nonrigid Deformer
+                # 加载保存的模型状态
+                saved_model_state = torch.load(
+                    os.path.join(old_checkpnts_dir, 'ModelParameters', str(kwargs['checkpoint']) + ".pth")
+                )
+                # 获取模型的 state_dict
+                model_state_dict = saved_model_state["model_state_dict"]
+                # 创建一个新的 state_dict，排除 nonrigid_deformer 的参数
+                filtered_state_dict = {
+                    k: v for k, v in model_state_dict.items()
+                    if not k.startswith("nonrigid_deformer.")
+                }
+                # 加载过滤后的参数
+                self.model.load_state_dict(filtered_state_dict, strict=False)  # 注意：strict=False
+                # 恢复其他信息（如 epoch）
+                self.start_epoch = saved_model_state['epoch']
+                
 
-            data = torch.load(
+            try:
+                data = torch.load(
+                    os.path.join(old_checkpnts_dir, 'OptimizerParameters', str(kwargs['checkpoint']) + ".pth"))
+                self.optimizer.load_state_dict(data["optimizer_state_dict"])
+                self.optimizer_nonrigid.load_state_dict(data["optimizer_nonrigid_state_dict"])
+                self.optimizer_nonrigid_param.load_state_dict(data["optimizer_nonrigid_param_state_dict"])
+            except:
+                data = torch.load(
                 os.path.join(old_checkpnts_dir, 'OptimizerParameters', str(kwargs['checkpoint']) + ".pth"))
-            self.optimizer.load_state_dict(data["optimizer_state_dict"])
-            # self.optimizer_nonrigid.load_state_dict(data["optimizer_nonrigid_state_dict"])
-            # self.optimizer_nonrigid_param.load_state_dict(data["optimizer_nonrigid_param_state_dict"])
+                self.optimizer.load_state_dict(data["optimizer_state_dict"])
 
             data = torch.load(
                 os.path.join(old_checkpnts_dir, self.scheduler_params_subdir, str(kwargs['checkpoint']) + ".pth"))
@@ -296,38 +301,28 @@ class TrainRunner():
                 {"epoch": epoch, "model_state_dict": self.model.state_dict()},
                 os.path.join(self.checkpoints_path, self.model_params_subdir, str(epoch) + ".pth"))
             torch.save(
-                {"epoch": epoch, "optimizer_state_dict": self.optimizer.state_dict()},
+                {"epoch": epoch, "optimizer_state_dict": self.optimizer.state_dict(),
+                "optimizer_nonrigid_state_dict": self.optimizer_nonrigid.state_dict(),
+                "optimizer_nonrigid_param_state_dict": self.optimizer_nonrigid_param.state_dict()},
                 os.path.join(self.checkpoints_path, self.optimizer_params_subdir, str(epoch) + ".pth"))
             torch.save(
-                {"epoch": epoch, "scheduler_state_dict": self.scheduler.state_dict()},
-                os.path.join(self.checkpoints_path, self.scheduler_params_subdir, str(epoch) + ".pth"))
-            torch.save(
-                {"epoch": epoch, "scheduler_nonrigid_state_dict": self.scheduler_nonrigid.state_dict()},
-                os.path.join(self.checkpoints_path, self.scheduler_params_subdir, str(epoch) + ".pth"))
-            torch.save(
-                {"epoch": epoch, "scheduler_nonrigid_param_state_dict": self.scheduler_nonrigid_param.state_dict()},
+                {"epoch": epoch, "scheduler_state_dict": self.scheduler.state_dict(),
+                "scheduler_nonrigid_state_dict": self.scheduler_nonrigid.state_dict(),
+                "scheduler_nonrigid_param_state_dict": self.scheduler_nonrigid_param.state_dict()},
                 os.path.join(self.checkpoints_path, self.scheduler_params_subdir, str(epoch) + ".pth"))
 
         torch.save(
             {"epoch": epoch, "model_state_dict": self.model.state_dict()},
             os.path.join(self.checkpoints_path, self.model_params_subdir, "latest.pth"))
         torch.save(
-            {"epoch": epoch, "optimizer_state_dict": self.optimizer.state_dict()},
+            {"epoch": epoch, "optimizer_state_dict": self.optimizer.state_dict(),
+             "optimizer_nonrigid_state_dict": self.optimizer_nonrigid.state_dict(),
+             "optimizer_nonrigid_param_state_dict": self.optimizer_nonrigid_param.state_dict()},
             os.path.join(self.checkpoints_path, self.optimizer_params_subdir, "latest.pth"))
         torch.save(
-            {"epoch": epoch, "optimizer_nonrigid_state_dict": self.optimizer_nonrigid.state_dict()},
-            os.path.join(self.checkpoints_path, self.optimizer_params_subdir, "latest.pth"))
-        torch.save(
-            {"epoch": epoch, "optimizer_nonrigid_param_state_dict": self.optimizer_nonrigid_param.state_dict()},
-            os.path.join(self.checkpoints_path, self.optimizer_params_subdir, "latest.pth"))
-        torch.save(
-            {"epoch": epoch, "scheduler_state_dict": self.scheduler.state_dict()},
-            os.path.join(self.checkpoints_path, self.scheduler_params_subdir, "latest.pth"))
-        torch.save(
-            {"epoch": epoch, "scheduler_nonrigid_state_dict": self.scheduler_nonrigid.state_dict()},
-            os.path.join(self.checkpoints_path, self.scheduler_params_subdir, "latest.pth"))
-        torch.save(
-            {"epoch": epoch, "scheduler_nonrigid_param_state_dict": self.scheduler_nonrigid_param.state_dict()},
+            {"epoch": epoch, "scheduler_state_dict": self.scheduler.state_dict(),
+             "scheduler_nonrigid_state_dict": self.scheduler_nonrigid.state_dict(),
+             "scheduler_nonrigid_param_state_dict": self.scheduler_nonrigid_param.state_dict()},
             os.path.join(self.checkpoints_path, self.scheduler_params_subdir, "latest.pth"))
 
         if self.optimize_inputs:
@@ -359,6 +354,8 @@ class TrainRunner():
 
     def run(self):
         acc_loss = {}
+        
+        samples_hand_dict = {}
 
         for epoch in range(self.start_epoch, self.nepochs + 1):
             # For geometry network annealing frequency band
@@ -377,108 +374,7 @@ class TrainRunner():
                 self.save_checkpoints(epoch)
             else:
                 self.save_checkpoints(epoch, only_latest=True)
-
-            if (epoch % self.plot_freq == 0 and epoch < 5 and not self.optimize_contact) or (epoch % (self.plot_freq * 5) == 0 and not self.optimize_contact):
-                self.model.eval()
-                if self.optimize_inputs:
-                    if self.optimize_expression:
-                        self.expression.eval()
-                    if self.optimize_latent_code:
-                        self.latent_codes.eval()
-                    if self.optimize_pose:
-                        self.flame_pose.eval()
-                        self.camera_pose.eval()
-                    if self.optimize_pca and self.optimize_contact:
-                        self.nonrigid_params.eval()
-                    if self.optimize_mano_pose:
-                        self.mano_pose.eval()
-                        self.mano_transl.eval()
-                eval_iterator = iter(self.plot_dataloader)
-                for img_index in range(len(self.plot_dataset)):
-                    start_time = time.time()
-                    if img_index >= self.conf.get_int('plot.plot_nimgs'):
-                        break
-                    indices, model_input, ground_truth = next(eval_iterator)
-
-                    for k, v in model_input.items():
-                        try:
-                            model_input[k] = v.cuda()
-                        except:
-                            model_input[k] = v
-
-                    for k, v in ground_truth.items():
-                        try:
-                            ground_truth[k] = v.cuda()
-                        except:
-                            ground_truth[k] = v
-
-                    if self.optimize_inputs:
-                        if self.optimize_latent_code:
-                            model_input['latent_code'] = self.latent_codes(model_input["idx"]*self.eval_subsample).squeeze(1).detach()
-                        # if self.optimize_contact:
-                        #     model_input['latent_codes_nonrigid'] = self.latent_codes_nonrigid(model_input["idx"]*self.eval_subsample).squeeze(1).detach()
-                        if self.optimize_expression:
-                            model_input['expression'] = self.expression(model_input["idx"]*self.eval_subsample).squeeze(1).detach()
-                        if self.optimize_pca:
-                            model_input['nonrigid_params'] = self.nonrigid_params(model_input["idx"]*self.eval_subsample).squeeze(1).detach()
-                        if self.optimize_pose:
-                            model_input['flame_pose'] = self.flame_pose(model_input["idx"]*self.eval_subsample).squeeze(1).detach()
-                            model_input['camera_pose'] = self.camera_pose(model_input["idx"]*self.eval_subsample).squeeze(1).detach()
-                        if self.optimize_mano_pose:
-                            model_input['mano_hand_pose'] = self.mano_pose(model_input["idx"]*self.eval_subsample).squeeze(1).detach()
-                            model_input['mano_transl'] = self.mano_transl(model_input["idx"]*self.eval_subsample).squeeze(1).detach()
-                    split = utils.split_input(model_input, self.total_pixels, n_pixels=min(33000, self.img_res[0] * self.img_res[1]))
-                    # split = utils.split_input(model_input, self.total_pixels, n_pixels=self.img_res[0] * self.img_res[1])
-
-                    res = []
-                    scale = None
-                    shift = None
-                    for s in split:
-                        s['depth_scale'] = scale
-                        s['depth_shift'] = shift
-                        out, sdf_function = self.model(s, return_sdf=True)
-                        for k, v in out.items():
-                            try:
-                                out[k] = v.detach()
-                            except:
-                                out[k] = v
-                        res.append(out)
-                        scale = out['depth_scale']
-                        shift = out['depth_shift']
-
-                    batch_size = ground_truth['rgb'].shape[0]
-                    model_outputs = utils.merge_output(res, self.total_pixels, batch_size)
-                    plot_dir = os.path.join(self.eval_dir, model_input['sub_dir'][0], 'epoch_'+str(epoch))
-                    img_name = model_input['img_name'][0,0].cpu().numpy()
-                    utils.mkdir_ifnotexists(os.path.join(self.eval_dir, model_input['sub_dir'][0], 'epoch_'+str(epoch)))
-                    print("Saving image {} into {}".format(img_name, plot_dir))
-                    plt.plot(img_name,
-                             sdf_function,
-                             model_outputs,
-                             model_input['cam_pose'],
-                             ground_truth,
-                             plot_dir,
-                             epoch,
-                             self.img_res,
-                             is_eval=False,
-                             **self.plot_conf
-                             )
-                    print("Plot time per image: {}".format(time.time() - start_time))
-                    del model_outputs, res, ground_truth
-                self.model.train()
-                if self.optimize_inputs:
-                    if self.optimize_expression:
-                        self.expression.train()
-                    if self.optimize_latent_code:
-                        self.latent_codes.train()
-                    if self.optimize_pose:
-                        self.flame_pose.train()
-                        self.camera_pose.train()
-                    if self.optimize_pca and self.optimize_contact:
-                        self.nonrigid_params.train()
-                    if self.optimize_mano_pose:
-                        self.mano_pose.train()
-                        self.mano_transl.train()
+            
             start_time = time.time()
             
 
@@ -518,28 +414,49 @@ class TrainRunner():
                         
                 model_input['optimize_contact'] = self.optimize_contact
                 model_input['optimize_mano_pose'] = self.optimize_mano_pose
-                
-                # model_outputs = self.model(model_input)
-                # loss_output = self.loss(model_outputs, ground_truth)
-                
+
+                if model_input["idx"].item() not in samples_hand_dict.keys():
+                    model_input['samples_hand'] = None
+                else:
+                    model_input['samples_hand'] = samples_hand_dict[model_input["idx"].item()]
+ 
                 model_outputs = self.model(model_input)
-                # if self.optimize_contact:
-                #     prev_nonrigid_deformation = model_outputs['nonrigid_deformation_onhand_tohead'].detach()
-                
+
+                if self.optimize_contact and epoch == self.start_epoch and (model_input["idx"].item() not in samples_hand_dict.keys() or samples_hand_dict[model_input["idx"].item()] is None):
+                    samples_hand_dict[model_input["idx"].item()] = model_outputs['samples_hand'].detach().cpu()
+
                 if self.contact_only and self.optimize_contact:
-                    loss_output = self.loss.cal_contact_loss(model_outputs)
+                    loss_output = self.loss.cal_contact_loss(model_outputs, ground_truth)
                     contact_loss = loss_output['contact_loss']
 
                     self.optimizer_nonrigid.zero_grad()
                     self.optimizer_nonrigid_param.zero_grad()
 
-                    # contact_loss.backward(retain_graph=True)
                     contact_loss.backward()
 
                     self.optimizer_nonrigid.step()
                     self.optimizer_nonrigid_param.step()
+                    
+                    # loss_output = self.loss(model_outputs, ground_truth)
+                    # loss = loss_output['loss'] 
+                    # contact_loss = loss_output['contact_loss']
+                    # loss = loss + contact_loss
+                    
+                    # self.optimizer.zero_grad()
+                    # if self.optimize_inputs:
+                    #     self.optimizer_cam.zero_grad()
+                    # self.optimizer_nonrigid.zero_grad()
+                    # self.optimizer_nonrigid_param.zero_grad()
+                    
+                    # loss.backward()
+                   
+                    # self.optimizer.step()
+                    # if self.optimize_inputs:
+                    #     self.optimizer_cam.step()  
+                    # self.optimizer_nonrigid.step()
+                    # self.optimizer_nonrigid_param.step()
                 
-                elif self.optimize_contact and epoch >= 30:
+                elif self.optimize_contact and epoch >= 50:
                     loss_output = self.loss(model_outputs, ground_truth)
                     loss = loss_output['loss'] 
                     contact_loss = loss_output['contact_loss']
@@ -551,7 +468,7 @@ class TrainRunner():
                     self.optimizer_nonrigid_param.zero_grad()
                     
                     contact_loss.backward(retain_graph=True)
-                   
+
                     self.optimizer.zero_grad()
                     if self.optimize_inputs:
                         self.optimizer_cam.zero_grad()
@@ -578,11 +495,6 @@ class TrainRunner():
                     if self.optimize_inputs:
                         self.optimizer_cam.step()
                         
-                # rgb_loss = loss_output['rgb_loss']   
-                # self.optimizer_rgb.zero_grad()
-                # rgb_loss.backward()
-                # self.optimizer_rgb.step()
-                
                 for k, v in loss_output.items():
                     loss_output[k] = v.detach().item()
                     if k not in acc_loss:
@@ -607,14 +519,6 @@ class TrainRunner():
                 gc.collect()
                 torch.cuda.empty_cache()
 
-            # self.scheduler.step()
-            # self.scheduler_nonrigid.step()
-            # self.scheduler_nonrigid_param.step()
             print("Epoch time: {}".format(time.time() - start_time))
             
-            # del model_outputs, ground_truth
-
-            # import gc
-            # gc.collect()
-            # torch.cuda.empty_cache()
 

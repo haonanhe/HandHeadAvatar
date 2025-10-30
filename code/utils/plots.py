@@ -354,6 +354,7 @@ def plot_images(model_outputs, depth_image, depth_image_hand, depth_gt, ground_t
         plot_image(normal_points_head, path, epoch, img_index, plot_nrow, img_res, 'normal_head')
         # plot_image(lbs_points, path, epoch, img_index, plot_nrow, img_res, 'weights')
         if 'nonrigid_dir' in model_outputs:
+            # plot_image(gt_deform_dir_points, path, epoch, img_index, plot_nrow, img_res, 'gt_pca_basis')
             plot_image(deform_dir_points, path, epoch, img_index, plot_nrow, img_res, 'pca_basis')
         if 'normal_values_hand' in model_outputs:
             plot_image(normal_points_all, path, epoch, img_index, plot_nrow, img_res, 'normal_all')

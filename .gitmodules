@@ -7,3 +7,6 @@
 [submodule "preprocess/submodules/face-parsing.PyTorch"]
 	path = preprocess/submodules/face-parsing.PyTorch
 	url = https://github.com/zllrunning/face-parsing.PyTorch
+[submodule "preprocess/submodules/hamer"]
+	path = preprocess/submodules/hamer
+	url = https://github.com/geopavlakos/hamer.git

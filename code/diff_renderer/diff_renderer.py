@@ -1,12 +1,6 @@
 from .core import (
     Mesh, Renderer, Camera
 )
-import sys 
-sys.path.append('/home/haonan/data/hold_soft/generator/src/diff_renderer')
-import nvdiffrec.render.light as light
-import nvdiffrec.render.renderutils.ops as ru
-import nvdiffrast.torch as dr
-
 import mano 
 import torch
 import numpy as np
@@ -38,7 +32,7 @@ class Diff_Renderer(nn.Module):
         print("Rasterizing:", self.channels_gbuffer)
         
         if obj_file is None:
-            mano_model_path = '/home/haonan/data/hold_soft/generator/assets/MANO_RIGHT.pkl'
+            mano_model_path = '../mano_model/data/mano/MANO_RIGHT.pkl'
             rh_model = mano.model.load(
                     model_path=mano_model_path,
                     is_right= True, 
@@ -64,7 +58,6 @@ class Diff_Renderer(nn.Module):
             self.cano_mesh.compute_connectivity()
         
         else:
-            # obj_file = '/home/haonan/Codes/IMavatar/code/mano_model/data/hand_head_uv_template.obj'
             verts, faces, aux = load_obj(obj_file)
             self.cano_mesh = Mesh(verts.numpy(), faces.verts_idx.numpy(), device=device)
             self.cano_mesh.compute_connectivity()
@@ -72,37 +65,7 @@ class Diff_Renderer(nn.Module):
         self.K = K
         self.device = device
         
-    # def render(self, vertices,):
-    #     extrinsic = torch.eye(4)
-    #     R = extrinsic[:3, :3]
-    #     t = extrinsic[:3, 3]
-    #     camera = Camera(self.K, R, t, device=self.device)
-        
-    #     num_frames = vertices.shape[0]
-    #     cameras = list([camera for i in range(num_frames)])
-        
-    #     cano_mesh = self.cano_mesh.to(vertices.device)
-    #     normals = cano_mesh.fetch_all_normals(vertices, cano_mesh)
-        
-    #     gbuffers = self.renderer.render_batch(cameras, vertices.contiguous(), normals, 
-    #                                 channels=self.channels_gbuffer, with_antialiasing=True, 
-    #                                 canonical_v=cano_mesh.vertices, canonical_idx=cano_mesh.indices) 
-        
-    #     pred_depth = gbuffers['position'][:,:,:,-1][:,:,:,None]
-
-    #     mask = gbuffers['mask']
-        
-    #     return pred_depth, mask
-
     def render(self, vertices, extrinsic):
-        # extrinsic = torch.eye(4)
-        # R = extrinsic[:3, :3]
-        # t = extrinsic[:3, 3]
-        # camera = Camera(self.K, R, t, device=self.device)
-        
-        # num_frames = vertices.shape[0]
-        # cameras = list([camera for i in range(num_frames)])
-
         num_frames = vertices.shape[0]
         cameras = []
         for i in range(num_frames):
@@ -114,12 +77,6 @@ class Diff_Renderer(nn.Module):
         cano_mesh = self.cano_mesh.to(vertices.device)
         normals = cano_mesh.fetch_all_normals(vertices, cano_mesh)
         
-        # vertices[:,:,2] = vertices[:,:,2] - vertices[:,:,2].min()
-
-        # min_z = vertices[:, :, 2].min()
-        # trans_vertices = vertices.clone()
-        # trans_vertices[:, :, 2] = vertices[:, :, 2] - min_z
-
         gbuffers = self.renderer.render_batch(cameras, vertices.contiguous(), normals, 
                                     channels=self.channels_gbuffer, with_antialiasing=True, 
                                     canonical_v=cano_mesh.vertices, canonical_idx=cano_mesh.indices) 
@@ -128,10 +85,4 @@ class Diff_Renderer(nn.Module):
 
         mask = gbuffers['mask']
         
-        # masked_pred_depth = pred_depth[mask.bool()]
-        # pred_depth = (pred_depth - masked_pred_depth.min()) / (masked_pred_depth.max() - masked_pred_depth.min())
-        # pred_depth = (pred_depth - pred_depth.min()) / (pred_depth.max() - pred_depth.min())
-        # pred_depth = (pred_depth - pred_depth.min()) / pred_depth.max()
-        # pred_depth = (pred_depth - pred_depth.min())
-
         return pred_depth, mask

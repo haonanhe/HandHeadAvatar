@@ -53,6 +53,8 @@ class HHDataset(torch.utils.data.Dataset):
         self.total_pixels = img_res[0] * img_res[1]
         self.img_res = img_res
         self.sample_size = sample_size
+        
+        # use_semantics = False
         self.use_semantics = use_semantics
 
         self.data = {
@@ -62,118 +64,126 @@ class HHDataset(torch.utils.data.Dataset):
             "hand_mask_paths": [],
             "depth_paths": [],
             "world_mats": [],
-            # FLAME expression and pose parameters
             "expressions": [],
             "flame_pose": [],
-            # saving image names and subdirectories
             "img_name": [],
             "sub_dir": [],
             "bbox": [],
             "flame_scale": [],
             "flame_transl": [],
             "scales_all": [],
-            
             "mano_global_orient": [],
             "mano_hand_pose": [],
             "mano_betas": [],
             "mano_transl": [],
             "mano_scale": [],
-            
             "w2c_p": [],
-            # "cam_intrinsics": [],
             "gt_hand_landmarks": []
         }
         if self.use_semantics:
-            # optionally using semantic maps
             self.data["semantic_paths"] = []
 
+        # Helper function to subsample a list
+        def subsample_list(lst, subsample):
+            if isinstance(subsample, int) and subsample > 1:
+                return lst[::subsample]
+            elif isinstance(subsample, list):
+                if len(subsample) == 2:
+                    start, end = subsample
+                    indices = list(range(start, end))
+                elif len(subsample) == 3:
+                    start, end, step = subsample
+                    indices = list(range(start, end, step))
+                else:
+                    raise ValueError("subsample list must be length 2 or 3")
+                return [lst[i] for i in indices if i < len(lst)]
+            else:
+                return lst
+
+        self.full_len_dataset = 0
+        
         for dir in sub_dir:
             instance_dir = os.path.join(data_folder, subject_name, subject_name, dir)
-            assert os.path.exists(instance_dir), "Data directory is empty"
+            assert os.path.exists(instance_dir), f"Data directory is empty: {instance_dir}"
 
-            cam_file = '{0}/{1}'.format(instance_dir, json_name)
-
+            cam_file = os.path.join(instance_dir, json_name)
             with open(cam_file, 'r') as f:
                 camera_dict = json.load(f)
 
+            # Temporary storage for this sub_dir
+            temp_data = {k: [] for k in self.data.keys()}
+
             for frame in camera_dict['frames']:
-                # world to camera matrix
                 world_mat = np.array(frame['world_mat']).astype(np.float32)
-                self.data["w2c_p"].append(world_mat)
-                ## camera to world matrix
-                self.data["world_mats"].append(rend_util.load_K_Rt_from_P(None, world_mat[:3,:])[1])
-                
-                # cam = rend_util.load_K_Rt_from_P(None, world_mat[:3,:])[1]
-                # extrinsic = np.eye(4)
-                # R = cam[:3, :3].copy()
-                # t = cam[:3, 3].copy()
-                # # ######################################## for deca
-                # # angle_radians = np.radians(180)
-                # # R_Z = np.array([
-                # #     [np.cos(angle_radians), -np.sin(angle_radians), 0],
-                # #     [np.sin(angle_radians), np.cos(angle_radians), 0],
-                # #     [0, 0, 1]
-                # # ])
-                # # R = np.dot(R_Z, R)
-                # # t = np.dot(R_Z, t)
+                temp_data["w2c_p"].append(world_mat)
+                temp_data["world_mats"].append(rend_util.load_K_Rt_from_P(None, world_mat[:3,:])[1])
+                temp_data["expressions"].append(np.array(frame['expression']).astype(np.float32))
+                temp_data["flame_pose"].append(np.array(frame['pose']).astype(np.float32))
 
-                # F_x = np.array([
-                #     [-1, 0, 0],
-                #     [0, 1, 0],
-                #     [0, 0, 1]
-                # ])
-                # R = np.dot(F_x, R)
-                # t = np.dot(F_x, t)
-                # # ######################################## for deca
-                # extrinsic[:3, :3] = R
-                # extrinsic[:3, 3] = t #- (R @ head_transl)
-                # self.data["world_mats"].append(extrinsic)
-                
-                self.data["expressions"].append(np.array(frame['expression']).astype(np.float32))
-                self.data["flame_pose"].append(np.array(frame['pose']).astype(np.float32))
-                # self.data["flame_transl"].append(np.array(frame['head_transl']).astype(np.float32))
-                image_path = '{0}/{1}.png'.format(instance_dir, frame["file_path"])
-                self.data["image_paths"].append(image_path)
-                self.data["mask_paths"].append(os.path.join(os.path.dirname(image_path.replace('image', 'mask')), '%07d.png'%(int(frame["file_path"].split('/')[-1]))))
-                self.data["head_mask_paths"].append(os.path.join(os.path.dirname(image_path.replace('image', 'head_mask')), '%07d.png'%(int(frame["file_path"].split('/')[-1])-1)))
-                self.data["hand_mask_paths"].append(os.path.join(os.path.dirname(image_path.replace('image', 'hand_mask')), '%07d.png'%(int(frame["file_path"].split('/')[-1])-1)))
-                self.data["depth_paths"].append(os.path.join(os.path.dirname(image_path.replace('image', 'depth_imgs_v2')), '%07d.jpg'%(int(frame["file_path"].split('/')[-1]))))
-                # self.data["depth_paths"].append(os.path.join(os.path.dirname(image_path.replace('image', 'depth')), '%07d.tiff'%(int(frame["file_path"].split('/')[-1]))))
-                if use_semantics:
-                    self.data["semantic_paths"].append(image_path.replace('image', 'semantic'))
-                self.data["img_name"].append(int(frame["file_path"].split('/')[-1]))
-                self.data["sub_dir"].append(dir)
-                self.data["bbox"].append(((np.array(frame['bbox']) + 1.) * np.array([img_res[0],img_res[1],img_res[0],img_res[1]])/ 2).astype(int))
-                
-                if 'head_transl' in frame.keys():
-                    head_transl = np.array(frame['head_transl']).astype(np.float32)
-                    self.data["flame_transl"].append(head_transl)
+                image_path = os.path.join(instance_dir, f"{frame['file_path']}.png")
+                temp_data["image_paths"].append(image_path)
+
+                base_frame_id = int(frame["file_path"].split('/')[-1])
+                mask_dir = os.path.dirname(image_path.replace('image', 'mask'))
+                temp_data["mask_paths"].append(os.path.join(mask_dir, f'{base_frame_id:07d}.png'))
+
+                head_mask_dir = os.path.dirname(image_path.replace('image', 'head_mask'))
+                temp_data["head_mask_paths"].append(os.path.join(head_mask_dir, f'{base_frame_id - 1:07d}.png'))
+
+                hand_mask_dir = os.path.dirname(image_path.replace('image', 'hand_mask'))
+                temp_data["hand_mask_paths"].append(os.path.join(hand_mask_dir, f'{base_frame_id - 1:07d}.png'))
+
+                depth_dir = os.path.dirname(image_path.replace('image', 'depth_imgs_v2'))
+                temp_data["depth_paths"].append(os.path.join(depth_dir, f'{base_frame_id:07d}.jpg'))
+
+                if self.use_semantics:
+                    temp_data["semantic_paths"].append(image_path.replace('image', 'semantic'))
+
+                temp_data["img_name"].append(base_frame_id)
+                temp_data["sub_dir"].append(dir)
+                bbox = ((np.array(frame['bbox']) + 1.) * np.array([img_res[0], img_res[1], img_res[0], img_res[1]]) / 2).astype(int)
+                temp_data["bbox"].append(bbox)
+
+                if 'head_transl' in frame:
+                    temp_data["flame_transl"].append(np.array(frame['head_transl']).astype(np.float32))
                 else:
-                    self.data["flame_transl"].append(None)
-                if 'flame_scale' in frame.keys():
-                    flame_scale = np.array(frame['flame_scale']).astype(np.float32)
-                    self.data["flame_scale"].append(flame_scale)
+                    temp_data["flame_transl"].append(None)
+
+                if 'flame_scale' in frame:
+                    temp_data["flame_scale"].append(np.array(frame['flame_scale']).astype(np.float32))
                 else:
-                    self.data["flame_transl"].append(None)
+                    temp_data["flame_scale"].append(None)  # 注意：原代码这里 append 到 flame_transl，是 bug！
+
+                temp_data["scales_all"].append(np.array(frame['scales_all']).astype(np.float32))
+
+                if 'global_orient' in frame:
+                    temp_data["mano_global_orient"].append(np.array(frame['global_orient']).astype(np.float32))
+                    temp_data["mano_hand_pose"].append(np.array(frame['hand_pose']).astype(np.float32))
+                    temp_data["mano_betas"].append(np.array(frame['betas']).astype(np.float32))
+                    temp_data["mano_transl"].append(np.array(frame['hand_transl']).astype(np.float32))
+                    temp_data["mano_scale"].append(np.array(frame['mano_scale']).astype(np.float32))
+                    temp_data["gt_hand_landmarks"].append(np.array(frame['gt_mano_keypoints']).astype(np.float32))
+                else:
+                    temp_data["mano_global_orient"].append(None)
+                    temp_data["mano_hand_pose"].append(None)
+                    temp_data["mano_betas"].append(None)
+                    temp_data["mano_transl"].append(None)
+                    temp_data["mano_scale"].append(None)
+                    temp_data["gt_hand_landmarks"].append(None)
+
+            # self.full_len_dataset += len(temp_data["image_paths"][::subsample])
+            self.full_len_dataset += len(temp_data["image_paths"][::2])
+            # self.full_len_dataset += len(temp_data["image_paths"][::1])
+            
+            # ✅ Subsample within this sub_dir
+            if subsample is not None and subsample != 1:
+                for k in temp_data:
+                    temp_data[k] = subsample_list(temp_data[k], subsample)
+
+            # Append sampled data to global self.data
+            for k in self.data:
+                self.data[k].extend(temp_data[k])
                     
-                self.data["scales_all"].append(np.array(frame['scales_all']).astype(np.float32))
-                
-                if 'global_orient' in frame.keys():
-                    self.data["mano_global_orient"].append(np.array(frame['global_orient']).astype(np.float32))
-                    self.data["mano_hand_pose"].append(np.array(frame['hand_pose']).astype(np.float32))
-                    self.data["mano_betas"].append(np.array(frame['betas']).astype(np.float32))
-                    hand_transl = np.array(frame['hand_transl'])
-                    self.data["mano_transl"].append(hand_transl.astype(np.float32))
-                    mano_scale = np.array(frame['mano_scale'])
-                    self.data["mano_scale"].append(mano_scale.astype(np.float32))
-                    self.data["gt_hand_landmarks"].append(np.array(frame['gt_mano_keypoints']).astype(np.float32))
-                else:
-                    self.data["mano_global_orient"].append(None)
-                    self.data["mano_hand_pose"].append(None)
-                    self.data["mano_betas"].append(None)
-                    self.data["mano_transl"].append(None)
-                    self.data["mano_scale"].append(None)
-
         self.shape_params = torch.tensor(camera_dict['shape_params']).float().unsqueeze(0)
         focal_cxcy = camera_dict['intrinsics']
         # construct intrinsic matrix in pixels
@@ -192,35 +202,6 @@ class HHDataset(torch.utils.data.Dataset):
         self.intrinsics = intrinsics
         
         self.cam_intrinsics = torch.tensor(camera_dict['cam_intrinsics']).float()
-        
-        self.full_len_dataset = len(self.data["image_paths"])
-
-        # if isinstance(subsample, int) and subsample > 1:
-        #     for k, v in self.data.items():
-        #         self.data[k] = v[::subsample]
-        # elif isinstance(subsample, list):
-        #     if len(subsample) == 2:
-        #         subsamples = list(range(subsample[0], subsample[1]))
-        #     for k, v in self.data.items():
-        #         try:
-        #             self.data[k] = [v[s] for s in subsamples]
-        #         except:
-        #             breakpoint()
-        
-        if isinstance(subsample, int) and subsample > 1:
-            for k, v in self.data.items():
-                self.data[k] = v[::subsample]
-        elif isinstance(subsample, list):
-            if len(subsample) > 1:
-                subsamples = list(range(subsample[0], subsample[1]))
-            for k, v in self.data.items():
-                try:
-                    self.data[k] = [v[s] for s in subsamples]
-                except:
-                    breakpoint()
-            if len(subsample) == 3:
-                for k, v in self.data.items():
-                    self.data[k] = v[::subsample[2]]
 
         self.data["expressions"] = torch.from_numpy(np.stack(self.data["expressions"], 0))
         self.data["flame_pose"] = torch.from_numpy(np.stack(self.data["flame_pose"], 0))
