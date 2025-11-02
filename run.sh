@@ -22,13 +22,13 @@ video_names='finger.mp4 fist.mp4 palm.mp4 pinch.mp4'
 train_names=$(echo "$video_names" | sed 's/\.mp4//g' | tr ' ' '+')
 
 # Stage 1: Reconstruct the neural head avatar
-python scripts/exp_runner.py --conf "./confs/${conf_name}.conf" --wandb_workspace HHAvatar --nepoch 50
+python scripts/exp_runner.py --conf "./confs/${conf_name}.conf" --wandb_workspace HandHeadAvatar --nepoch 50
 
 # Stage 2: Fine-tune non-rigid deformations with contact optimization
 # Note: Ensure that ./confs/${conf_name}.conf has `optimize_contact` and `contact_only` set to True
 python scripts/exp_runner.py \
     --conf "./confs/${conf_name}.conf" \
-    --wandb_workspace HHAvatar \
+    --wandb_workspace HandHeadAvatar \
     --nepoch 250 \
     --checkpoint 50 \
     --is_continue \

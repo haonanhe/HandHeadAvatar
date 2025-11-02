@@ -1,8 +1,9 @@
-root_dir=/home/haonan/data/HandHead/HHAvatar/preprocess
+root_dir=$(pwd)/preprocess
 cd $root_dir
 #######################################################
 subject_name='zirui'
-path='/home/haonan/data/HandHead/HHAvatar/data/datasets'
+# path='./data/datasets'
+path="/home/haonan/data/HandHead/HHAvatar/data/datasets"
 video_folder=$path/$subject_name
 video_names='finger.mp4 fist.mp4 palm.mp4 pinch.mp4'
 shape_video='finger.mp4'
@@ -13,11 +14,9 @@ resize=512
 cuda_num=5
 export CUDA_VISIBLE_DEVICES=$cuda_num
 
+
 eval "$(conda shell.bash hook)"
-conda activate flare
-source ~/.bashrc
-eval "$(conda shell.bash hook)"
-conda activate flare
+conda activate HandHeadAvatar
 
 # fx, fy, cx, cy in pixels, need to adjust with resizing and cropping
 fx=1539.67462
@@ -76,7 +75,6 @@ done
 # flame
 echo "DECA FLAME parameter estimation"
 cd $path_deca
-source ~/.bashrc
 eval "$(conda shell.bash hook)"
 conda activate deca-env
 for video in $video_names
@@ -101,13 +99,9 @@ do
 done
 
 ### depth estimation
-cd $path_sapiens
-source ~/.bashrc
+cd $path_depthanything
 eval "$(conda shell.bash hook)"
-conda activate flare
-source ~/.bashrc
-eval "$(conda shell.bash hook)"
-conda activate flare
+conda activate HandHeadAvatar
 for video in $video_names
 do
     video_path=$video_folder/$video
@@ -127,8 +121,6 @@ done
 echo "Hamer MANO parameter estimation"
 cd $path_hamer
 export PYOPENGL_PLATFORM=egl
-# source deactivate
-source ~/.bashrc
 eval "$(conda shell.bash hook)"
 conda activate hamer
 for video in $video_names
@@ -267,14 +259,11 @@ done
 
 
 echo "fit MANO & FLAME parameter for one video: "$shape_video
-cd $pwd
-echo $pwd
+cd $(pwd)
+echo $(pwd)
 source ~/.bashrc
 eval "$(conda shell.bash hook)"
-conda activate flare
-source ~/.bashrc
-eval "$(conda shell.bash hook)"
-conda activate flare
+conda activate HandHeadAvatar
 IFS='.' read -r -a array <<< $shape_video
 python ./optimize.py --path $video_folder/$subject_name/"${array}" --cx $cx --cy $cy --fx $fx --fy $fy --size $resize --conf $root_dir/'confs'/$subject_name".conf"
 

@@ -171,9 +171,7 @@ class HHDataset(torch.utils.data.Dataset):
                     temp_data["mano_scale"].append(None)
                     temp_data["gt_hand_landmarks"].append(None)
 
-            # self.full_len_dataset += len(temp_data["image_paths"][::subsample])
-            self.full_len_dataset += len(temp_data["image_paths"][::2])
-            # self.full_len_dataset += len(temp_data["image_paths"][::1])
+            self.full_len_dataset += len(temp_data["image_paths"])
             
             # ✅ Subsample within this sub_dir
             if subsample is not None and subsample != 1:

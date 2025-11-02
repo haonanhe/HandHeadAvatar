@@ -155,6 +155,35 @@ class Loss(nn.Module):
         return output
     
 
+    # def get_contact_reg(self, nonrigid_deformation, sdf_head=None, sdf_hand=None, mask=None):
+    #     if sdf_head is None or sdf_hand is None:
+    #         return (nonrigid_deformation**2).mean()
+    #     if nonrigid_deformation is None:
+    #         return torch.tensor(0.0, device="cuda", dtype=torch.float32, requires_grad=True)
+
+    #     sdf_head = sdf_head.reshape(-1)
+    #     sdf_hand = sdf_hand.reshape(-1)
+
+    #     # Contact region definition
+    #     contact_core_margin = 0.005  # 5mm - realistic contact threshold
+    #     transition_margin = 0.02  # 20mm transition zone from core boundary
+
+    #     contact_core_mask = (sdf_head < 0) & (sdf_hand.abs() < contact_core_margin)
+
+    #     dist_head_condition = torch.relu(sdf_head)  # 0 if sdf_head < 0, else sdf_head
+    #     dist_hand_condition = torch.relu(sdf_hand.abs() - contact_core_margin)
+        
+    #     dist_to_contact = torch.maximum(dist_head_condition, dist_hand_condition)
+
+    #     sharpness = 6.0
+    #     reg_weight = torch.sigmoid(sharpness * (dist_to_contact / transition_margin - 0.5))
+
+    #     deform_magnitude = (nonrigid_deformation ** 2).mean(dim=-1)
+        
+    #     weighted_reg = deform_magnitude * reg_weight
+
+    #     return weighted_reg.mean()
+    
     def get_contact_reg(self, nonrigid_deformation, sdf_head=None, sdf_hand=None, mask=None):
         if sdf_head is None or sdf_hand is None:
             return (nonrigid_deformation**2).mean()
@@ -163,26 +192,18 @@ class Loss(nn.Module):
 
         sdf_head = sdf_head.reshape(-1)
         sdf_hand = sdf_hand.reshape(-1)
-
-        # Contact region definition
-        contact_core_margin = 0.005  # 5mm - realistic contact threshold
-        transition_margin = 0.02  # 20mm transition zone from core boundary
-
-        contact_core_mask = (sdf_head < 0) & (sdf_hand.abs() < contact_core_margin)
-
-        dist_head_condition = torch.relu(sdf_head)  # 0 if sdf_head < 0, else sdf_head
-        dist_hand_condition = torch.relu(sdf_hand.abs() - contact_core_margin)
         
-        dist_to_contact = torch.maximum(dist_head_condition, dist_hand_condition)
+        return (nonrigid_deformation**2).mean()
 
-        sharpness = 6.0
-        reg_weight = torch.sigmoid(sharpness * (dist_to_contact / transition_margin - 0.5))
+        # 1. ~ (both sdf < 0);
+        margin = 0.005
+        mask = ~((sdf_head < 0) & (sdf_hand.abs() < margin))
 
-        deform_magnitude = (nonrigid_deformation ** 2).mean(dim=-1)
-        
-        weighted_reg = deform_magnitude * reg_weight
-
-        return weighted_reg.mean()
+        if mask.sum() == 0: # which means all points are contact points
+            return (nonrigid_deformation**2).mean()  # Weak regularization
+        else:
+            reg = ((nonrigid_deformation[mask])** 2).mean()
+            return reg
 
     def get_contact_loss(self, sdf_head, sdf_hand, surf_mask=None):
         if sdf_head is None:
